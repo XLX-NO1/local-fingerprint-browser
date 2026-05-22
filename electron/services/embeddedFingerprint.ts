@@ -1,0 +1,66 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { BrowserProfile } from '../../src/types';
+import { buildCdpSetupCommands, type CdpCommand } from './cdpClient';
+import { buildFingerprintPreloadScript } from './fingerprint';
+import { proxyIdentity } from './proxy';
+
+export interface EmbeddedBrowserViewPreferences {
+  partition: string;
+  preload: string;
+  nodeIntegration: false;
+  contextIsolation: false;
+  sandbox: false;
+}
+
+export interface EmbeddedBrowserViewState {
+  profileId?: string;
+  fingerprintId?: string;
+  proxyIdentity?: string;
+}
+
+export function embeddedFingerprintPreloadPath(profile: BrowserProfile): string {
+  return join(profile.userDataDir, 'embedded-fingerprint-preload.js');
+}
+
+export async function writeEmbeddedFingerprintPreload(profile: BrowserProfile): Promise<string> {
+  await mkdir(profile.userDataDir, { recursive: true });
+  const preloadPath = embeddedFingerprintPreloadPath(profile);
+  await writeFile(preloadPath, buildFingerprintPreloadScript(profile.fingerprint), 'utf8');
+  return preloadPath;
+}
+
+export function buildEmbeddedBrowserViewPreferences(profile: BrowserProfile): EmbeddedBrowserViewPreferences {
+  return {
+    partition: `persist:profile-${profile.id}`,
+    preload: embeddedFingerprintPreloadPath(profile),
+    nodeIntegration: false,
+    contextIsolation: false,
+    sandbox: false,
+  };
+}
+
+export function buildEmbeddedCdpSetupCommands(profile: BrowserProfile): CdpCommand[] {
+  return buildCdpSetupCommands(profile.fingerprint, buildFingerprintPreloadScript(profile.fingerprint));
+}
+
+export function embeddedBrowserViewState(profile: BrowserProfile): Required<EmbeddedBrowserViewState> {
+  return {
+    profileId: profile.id,
+    fingerprintId: profile.fingerprint.id,
+    proxyIdentity: proxyIdentity(profile.proxy),
+  };
+}
+
+export function shouldRecreateEmbeddedBrowserView(current: EmbeddedBrowserViewState, profile: BrowserProfile): boolean {
+  const next = embeddedBrowserViewState(profile);
+  return current.profileId !== next.profileId
+    || current.fingerprintId !== next.fingerprintId
+    || current.proxyIdentity !== next.proxyIdentity;
+}
+
+export function buildAcceptLanguageHeader(languages: string[]): string {
+  return languages
+    .map((language, index) => (index === 0 ? language : `${language};q=${Math.max(0.1, 1 - index * 0.1).toFixed(1)}`))
+    .join(',');
+}

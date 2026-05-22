@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Local Fingerprint Profile Bridge",
+  "version": "0.1.0",
+  "description": "Profile bridge for the local fingerprint browser MVP.",
+  "permissions": ["storage", "proxy", "webRequest", "webRequestAuthProvider"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "proxy-auth.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["profile-config.js", "content.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    }
+  ]
+}
