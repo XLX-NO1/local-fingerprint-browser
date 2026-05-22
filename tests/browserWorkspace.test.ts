@@ -41,6 +41,12 @@ describe('browser workspace model', () => {
     expect(profile.tabs?.[0]).toMatchObject({ title: 'blank', url: 'about:blank' });
   });
 
+  it('creates blank tabs when the native create-tab IPC does not provide a url', () => {
+    const profile = createBlankTab(makeProfile(), undefined);
+
+    expect(profile.lastOpenedUrl).toBe('about:blank');
+  });
+
   it('toggles bookmarks for the active tab', () => {
     const profile = createBlankTab(makeProfile(), 'example.com');
     const bookmarked = toggleBookmarkInProfile(profile);

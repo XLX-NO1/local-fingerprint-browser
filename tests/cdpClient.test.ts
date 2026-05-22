@@ -115,6 +115,7 @@ describe('CdpClient', () => {
         awaitPromise: true,
       },
     });
+    expect(commands.at(-1)?.params?.expression).toContain('result.complete');
   });
 
   it('throws a clear error when the endpoint is unavailable', async () => {

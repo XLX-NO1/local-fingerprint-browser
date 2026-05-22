@@ -30,18 +30,21 @@ describe('embedded fingerprint helpers', () => {
     const preload = await writeEmbeddedFingerprintPreload(profile);
 
     expect(preload).toBe(join(profile.userDataDir, 'embedded-fingerprint-preload.js'));
-    expect(await readFile(preload, 'utf8')).toContain(profile.fingerprint.userAgent);
+    const source = await readFile(preload, 'utf8');
+    expect(source).toContain(profile.fingerprint.userAgent);
+    expect(source).toContain("document.createElement('script')");
+    expect(source).toContain('target.appendChild(script)');
   });
 
-  it('builds BrowserView preferences with isolated storage and main-world fingerprint preload', () => {
+  it('builds BrowserView preferences with isolated storage and sandboxed preload', () => {
     const profile = makeProfile(join(root, 'user-data'));
 
     expect(buildEmbeddedBrowserViewPreferences(profile)).toEqual({
       partition: `persist:profile-${profile.id}`,
       preload: embeddedFingerprintPreloadPath(profile),
       nodeIntegration: false,
-      contextIsolation: false,
-      sandbox: false,
+      contextIsolation: true,
+      sandbox: true,
     });
   });
 

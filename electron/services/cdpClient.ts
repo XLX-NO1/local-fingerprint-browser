@@ -126,8 +126,9 @@ export function buildCdpSetupCommands(fingerprint: FingerprintConfig, preloadScr
         expression: `new Promise((resolve) => {
           let attempts = 0;
           const check = () => {
-            if (window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__) {
-              resolve(window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__);
+            const result = window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__;
+            if (result && result.complete) {
+              resolve(result);
               return;
             }
             attempts += 1;

@@ -68,4 +68,11 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('status-error');
     expect(styles).toContain('.status-error');
   });
+
+  it('keeps native create-tab requests blank unless a url is provided', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+
+    expect(mainSource).toContain("createBlankTab(profile, rawUrl || 'about:blank')");
+    expect(mainSource).not.toContain("createBlankTab(profile, rawUrl || 'https://example.com')");
+  });
 });

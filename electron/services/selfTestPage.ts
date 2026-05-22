@@ -88,8 +88,8 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
 
     const errorToString = (error) => error instanceof Error ? error.message : String(error);
 
-    const renderReport = ({ expected, observed, canvasHash, webgl, matched, network, webrtc }) => {
-      window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__ = { expected, observed, canvasHash, webgl, matched, network, webrtc };
+    const renderReport = ({ expected, observed, canvasHash, webgl, matched, network, webrtc, complete }) => {
+      window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__ = { expected, observed, canvasHash, webgl, matched, network, webrtc, complete };
       const checks = [
         ...Object.values(matched),
         !webrtc.leakRisk
@@ -189,7 +189,8 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
         webgl,
         matched,
         network: { proxyConfigured: ${profile.proxy ? 'true' : 'false'}, publicIp: null, error: 'checking' },
-        webrtc: { supported: false, candidateCount: 0, candidates: [], leakRisk: false, webrtcLeakRisk: false }
+        webrtc: { supported: false, candidateCount: 0, candidates: [], leakRisk: false, webrtcLeakRisk: false },
+        complete: false
       };
       renderReport(baseReport);
 
@@ -203,7 +204,8 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
           proxyConfigured: ${profile.proxy ? 'true' : 'false'},
           ...networkResult
         },
-        webrtc
+        webrtc,
+        complete: true
       });
     };
     observe().catch((error) => {
@@ -228,7 +230,8 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
           webglRenderer: false
         },
         network: { proxyConfigured: ${profile.proxy ? 'true' : 'false'}, publicIp: null, error: 'observe failed' },
-        webrtc: { supported: false, candidateCount: 0, candidates: [], leakRisk: false, webrtcLeakRisk: false }
+        webrtc: { supported: false, candidateCount: 0, candidates: [], leakRisk: false, webrtcLeakRisk: false },
+        complete: true
       });
     });
   </script>

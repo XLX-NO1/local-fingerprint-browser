@@ -4,16 +4,16 @@ import { BrowserLauncher, findChromiumPath } from './services/browserLauncher';
 import { ProfileStore } from './services/profileStore';
 import { SettingsStore } from './services/settingsStore';
 import { checkProxyReachability } from './services/proxy';
-import { proxyAuthForLogin, proxyToChromiumUrl } from './services/proxy';
+import { proxyAuthForLogin } from './services/proxy';
 import {
   buildEmbeddedCdpSetupCommands,
-  buildAcceptLanguageHeader,
   buildEmbeddedBrowserViewPreferences,
   embeddedBrowserViewState,
   shouldRecreateEmbeddedBrowserView,
   type EmbeddedBrowserViewState,
   writeEmbeddedFingerprintPreload,
 } from './services/embeddedFingerprint';
+import { configureProfileSession } from './services/embeddedSession';
 import { prepareSelfTestPage } from './services/selfTestPage';
 import { buildNativeSelfTestCaptureScript, extractSelfTestReportFromExecutionResult, summarizeSelfTestReport } from './services/selfTestResult';
 import type { AppSettings, BrowserProfile, CreateProfileInput, UpdateProfileInput } from '../src/types';
@@ -264,7 +264,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('profiles:create-tab', async (_event, id: string, rawUrl?: string) => {
     const profile = await store.get(id);
-    const updated = createBlankTab(profile, rawUrl || 'https://example.com');
+    const updated = createBlankTab(profile, rawUrl || 'about:blank');
     await configureEmbeddedSession(updated);
     return store.update(id, updated);
   });
@@ -394,27 +394,7 @@ async function configureEmbeddedSession(profile: BrowserProfile): Promise<void> 
   const partition = `persist:profile-${profile.id}`;
   const profileSession = session.fromPartition(partition);
   await writeEmbeddedFingerprintPreload(profile);
-  if (profile.proxy) {
-    await profileSession.setProxy({
-      mode: 'fixed_servers',
-      proxyRules: proxyToChromiumUrl(profile.proxy),
-      proxyBypassRules: '<-loopback>',
-    });
-  } else {
-    await profileSession.setProxy({ mode: 'direct' });
-  }
-  profileSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
-  });
-  const acceptLanguage = buildAcceptLanguageHeader(profile.fingerprint.languages);
-  profileSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    callback({
-      requestHeaders: {
-        ...details.requestHeaders,
-        'Accept-Language': acceptLanguage,
-      },
-    });
-  });
+  await configureProfileSession(profileSession, profile);
 }
 
 async function applyNativeBrowserFingerprint(profile: BrowserProfile): Promise<void> {

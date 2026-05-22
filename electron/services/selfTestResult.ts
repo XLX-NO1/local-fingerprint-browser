@@ -34,8 +34,9 @@ export function buildNativeSelfTestCaptureScript(timeoutMs = 5000): string {
     new Promise((resolve) => {
       const startedAt = Date.now();
       const check = () => {
-        if (window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__) {
-          resolve(window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__);
+        const result = window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__;
+        if (result && result.complete) {
+          resolve(result);
           return;
         }
         if (Date.now() - startedAt > ${timeoutMs}) {
