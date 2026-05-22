@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIXED_BROWSER_ZOOM, cssRectToBrowserViewBounds } from '../src/nativeBrowserView';
+import { FIXED_BROWSER_ZOOM, MIN_NATIVE_WIDTH_FIT_ZOOM, computeWidthFitZoom, cssRectToBrowserViewBounds } from '../src/nativeBrowserView';
 
 describe('native browser view bounds', () => {
   it('converts css viewport rectangles to native window bounds', () => {
@@ -18,8 +18,21 @@ describe('native browser view bounds', () => {
     });
   });
 
-  it('uses one fixed browser zoom to avoid load-time layout jumping', () => {
-    expect(FIXED_BROWSER_ZOOM).toBe(0.9);
+  it('uses normal browser zoom so pages fill the BrowserView surface', () => {
+    expect(FIXED_BROWSER_ZOOM).toBe(1);
+  });
+
+  it('keeps normal zoom when page content already fits the native browser width', () => {
+    expect(computeWidthFitZoom({ x: 0, y: 0, width: 1000, height: 700 }, { width: 900, height: 1600 })).toBe(1);
+  });
+
+  it('shrinks wide page content to fit the native browser width', () => {
+    expect(computeWidthFitZoom({ x: 0, y: 0, width: 1000, height: 700 }, { width: 1200, height: 1600 })).toBe(0.833);
+  });
+
+  it('keeps width fitting readable for very wide pages', () => {
+    expect(MIN_NATIVE_WIDTH_FIT_ZOOM).toBe(0.5);
+    expect(computeWidthFitZoom({ x: 0, y: 0, width: 1000, height: 700 }, { width: 3000, height: 1600 })).toBe(0.5);
   });
 
 });

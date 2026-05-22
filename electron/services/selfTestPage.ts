@@ -12,9 +12,11 @@ export async function prepareSelfTestPage(profile: BrowserProfile): Promise<Self
   await mkdir(profile.userDataDir, { recursive: true });
   const filePath = join(profile.userDataDir, 'fingerprint-self-test.html');
   await writeFile(filePath, buildSelfTestHtml(profile), 'utf8');
+  const fileUrl = pathToFileURL(filePath);
+  fileUrl.searchParams.set('run', Date.now().toString(36));
   return {
     filePath,
-    fileUrl: pathToFileURL(filePath).toString(),
+    fileUrl: fileUrl.toString(),
   };
 }
 
@@ -44,16 +46,21 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
   <style>
     :root { color-scheme: dark; --bg:#080c0a; --line:#244536; --text:#d6ffe9; --muted:#83aa94; --green:#52ff9b; --cyan:#5ee7ff; --red:#ff5d73; }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text); font-family: "SFMono-Regular", Menlo, Consolas, monospace; letter-spacing: 0; }
-    main { max-width: 1120px; margin: 0 auto; padding: 28px; }
-    h1 { color: var(--green); font-size: 22px; margin: 0 0 6px; }
-    .sub { color: var(--muted); margin-bottom: 20px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    section { border: 1px solid var(--line); padding: 14px; background: #0d1511; }
-    h2 { color: var(--cyan); font-size: 13px; margin: 0 0 12px; text-transform: uppercase; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; margin: 0; color: var(--text); }
+    html, body { width: 100%; height: auto; min-height: 0; overflow: auto; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: "SFMono-Regular", Menlo, Consolas, monospace; font-size: 11px; letter-spacing: 0; }
+    main { width: 820px; max-width: calc(100vw - 24px); margin: 0; padding: 12px; display: grid; grid-template-rows: auto auto; overflow: hidden; }
+    h1 { color: var(--green); font-size: 18px; margin: 0 0 3px; }
+    .sub { color: var(--muted); margin-bottom: 8px; font-size: 10px; }
+    .grid { min-height: 0; display: grid; grid-template-columns: repeat(2, 400px); grid-template-rows: repeat(2, 300px); gap: 8px; }
+    section { border: 1px solid var(--line); padding: 8px; background: #0d1511; min-width: 0; min-height: 0; overflow: auto; }
+    h2 { color: var(--cyan); font-size: 11px; margin: 0 0 8px; text-transform: uppercase; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.42; margin: 0; color: var(--text); font-size: 10px; }
     .ok { color: var(--green); }
     .bad { color: var(--red); }
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-auto-rows: minmax(300px, auto); }
+      section { min-height: 300px; }
+    }
   </style>
 </head>
 <body>

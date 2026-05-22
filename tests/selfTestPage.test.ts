@@ -24,6 +24,7 @@ describe('prepareSelfTestPage', () => {
 
     expect(result.filePath).toBe(join(profile.userDataDir, 'fingerprint-self-test.html'));
     expect(result.fileUrl).toMatch(/^file:\/\//);
+    expect(result.fileUrl).toContain('fingerprint-self-test.html?run=');
 
     const html = await readFile(result.filePath, 'utf8');
     expect(html).toContain(profile.name);
@@ -44,6 +45,19 @@ describe('prepareSelfTestPage', () => {
     expect(html).toContain('window.__LOCAL_FINGERPRINT_SELF_TEST__');
     expect(html).toContain('window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__');
     expect(html).toContain('document.title =');
+    expect(html).toContain('width: 820px');
+    expect(html).toContain('max-width: calc(100vw - 24px)');
+    expect(html).toContain('margin: 0');
+    expect(html).toContain('font-size: 18px');
+    expect(html).toContain('grid-template-columns: repeat(2, 400px)');
+    expect(html).toContain('grid-template-rows: repeat(2, 300px)');
+    expect(html).toContain('@media (max-width: 760px)');
+    expect(html).toContain('grid-template-columns: minmax(0, 1fr)');
+    expect(html).toContain('height: auto');
+    expect(html).toContain('min-height: 0');
+    expect(html).toContain('overflow: hidden');
+    expect(html).not.toContain('height: 100vh');
+    expect(html).toContain('overflow: auto');
   });
 });
 

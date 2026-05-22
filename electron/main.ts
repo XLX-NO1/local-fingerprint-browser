@@ -28,7 +28,7 @@ import {
   updateActiveTabMetadata,
 } from '../src/browserWorkspace';
 import { computeFitPageZoom, measurePageScript, type FitSize } from '../src/webviewFit';
-import { FIXED_BROWSER_ZOOM, cssRectToBrowserViewBounds, type BrowserViewBounds } from '../src/nativeBrowserView';
+import { FIXED_BROWSER_ZOOM, computeWidthFitZoom, cssRectToBrowserViewBounds, type BrowserViewBounds } from '../src/nativeBrowserView';
 
 let mainWindow: BrowserWindow | undefined;
 let store: ProfileStore;
@@ -40,7 +40,10 @@ let nativeBrowserProfileId: string | undefined;
 let nativeBrowserBounds: BrowserViewBounds | undefined;
 let nativeBrowserAttached = false;
 let nativeBrowserMetadataTimer: NodeJS.Timeout | undefined;
+let nativeBrowserWidthFitTimer: NodeJS.Timeout | undefined;
 let nativeBrowserState: EmbeddedBrowserViewState = {};
+let nativeBrowserHandlersAttached = false;
+const hiddenSelfTestWindows = new Set<BrowserWindow>();
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
@@ -90,6 +93,29 @@ function resetNativeBrowserZoom(): void {
   nativeBrowserView.webContents.setZoomFactor(FIXED_BROWSER_ZOOM);
 }
 
+async function fitNativeBrowserWidth(): Promise<void> {
+  if (!nativeBrowserView || !nativeBrowserBounds || nativeBrowserView.webContents.isDestroyed()) {
+    return;
+  }
+  const content = await nativeBrowserView.webContents.executeJavaScript(measurePageScript(), true) as FitSize;
+  if (!nativeBrowserView || nativeBrowserView.webContents.isDestroyed()) {
+    return;
+  }
+  const zoom = computeWidthFitZoom(nativeBrowserBounds, content);
+  nativeBrowserView.webContents.setZoomLevel(0);
+  nativeBrowserView.webContents.setZoomFactor(zoom);
+}
+
+function scheduleNativeBrowserWidthFit(delayMs = 120): void {
+  if (nativeBrowserWidthFitTimer) {
+    clearTimeout(nativeBrowserWidthFitTimer);
+  }
+  nativeBrowserWidthFitTimer = setTimeout(() => {
+    nativeBrowserWidthFitTimer = undefined;
+    void fitNativeBrowserWidth().catch(() => resetNativeBrowserZoom());
+  }, delayMs);
+}
+
 function scheduleNativeBrowserMetadataUpdate(url?: string): void {
   if (nativeBrowserMetadataTimer) {
     clearTimeout(nativeBrowserMetadataTimer);
@@ -137,13 +163,18 @@ async function openNativeBrowserPopupAsTab(url: string): Promise<void> {
 }
 
 function attachNativeBrowserTabHandlers(view: BrowserView): void {
+  if (nativeBrowserHandlersAttached) {
+    return;
+  }
+  nativeBrowserHandlersAttached = true;
   view.webContents.setWindowOpenHandler(({ url }) => {
     void openNativeBrowserPopupAsTab(url).catch(() => undefined);
     return { action: 'deny' };
   });
   view.webContents.on('dom-ready', resetNativeBrowserZoom);
-  view.webContents.on('did-finish-load', resetNativeBrowserZoom);
-  view.webContents.on('did-stop-loading', resetNativeBrowserZoom);
+  view.webContents.on('dom-ready', () => scheduleNativeBrowserWidthFit(80));
+  view.webContents.on('did-finish-load', () => scheduleNativeBrowserWidthFit());
+  view.webContents.on('did-stop-loading', () => scheduleNativeBrowserWidthFit());
   view.webContents.on('did-navigate', (_event, url) => scheduleNativeBrowserMetadataUpdate(url));
   view.webContents.on('did-navigate-in-page', (_event, url) => scheduleNativeBrowserMetadataUpdate(url));
   view.webContents.on('page-title-updated', () => scheduleNativeBrowserMetadataUpdate());
@@ -157,6 +188,10 @@ function disposeNativeBrowserView(): void {
     clearTimeout(nativeBrowserMetadataTimer);
     nativeBrowserMetadataTimer = undefined;
   }
+  if (nativeBrowserWidthFitTimer) {
+    clearTimeout(nativeBrowserWidthFitTimer);
+    nativeBrowserWidthFitTimer = undefined;
+  }
   if (mainWindow && nativeBrowserView && nativeBrowserAttached) {
     mainWindow.removeBrowserView(nativeBrowserView);
   }
@@ -166,8 +201,14 @@ function disposeNativeBrowserView(): void {
   nativeBrowserView = undefined;
   nativeBrowserProfileId = undefined;
   nativeBrowserState = {};
+  nativeBrowserHandlersAttached = false;
   nativeBrowserAttached = false;
 }
+
+app.on('before-quit', () => {
+  disposeHiddenSelfTestView();
+  disposeNativeBrowserView();
+});
 
 async function captureNativeSelfTestResult(): Promise<void> {
   if (!nativeBrowserView || !nativeBrowserProfileId || nativeBrowserView.webContents.isDestroyed()) {
@@ -192,6 +233,59 @@ async function captureNativeSelfTestResult(): Promise<void> {
   notifyProfilesChanged();
 }
 
+function disposeHiddenSelfTestView(): void {
+  for (const hiddenWindow of hiddenSelfTestWindows) {
+    if (!hiddenWindow.isDestroyed()) {
+      hiddenWindow.close();
+    }
+  }
+  hiddenSelfTestWindows.clear();
+}
+
+async function runHiddenSelfTestCapture(profile: BrowserProfile, selfTestUrl: string): Promise<{ report?: Record<string, unknown>; summary?: string }> {
+  await configureEmbeddedSession(profile);
+  const selfTestWindow = new BrowserWindow({
+    show: false,
+    width: profile.fingerprint.windowWidth,
+    height: profile.fingerprint.windowHeight,
+    webPreferences: {
+      ...buildEmbeddedBrowserViewPreferences(profile),
+      backgroundThrottling: false,
+    },
+  });
+  hiddenSelfTestWindows.add(selfTestWindow);
+  selfTestWindow.on('closed', () => hiddenSelfTestWindows.delete(selfTestWindow));
+  selfTestWindow.webContents.setUserAgent(profile.fingerprint.userAgent);
+  attachNativeBrowserProxyAuth(selfTestWindow, profile);
+  try {
+    await loadUrlWithTimeout(selfTestWindow, selfTestUrl, 8000);
+    const rawResult = await selfTestWindow.webContents.executeJavaScript(buildNativeSelfTestCaptureScript(10000), true);
+    const report = extractSelfTestReportFromExecutionResult(rawResult);
+    return {
+      report,
+      summary: summarizeSelfTestReport(report),
+    };
+  } finally {
+    if (!selfTestWindow.isDestroyed()) {
+      selfTestWindow.close();
+    }
+    hiddenSelfTestWindows.delete(selfTestWindow);
+  }
+}
+
+async function loadUrlWithTimeout(window: BrowserWindow, url: string, timeoutMs: number): Promise<void> {
+  await Promise.race([
+    new Promise<void>((resolve, reject) => {
+      window.webContents.once('did-finish-load', () => resolve());
+      window.webContents.once('did-fail-load', (_event, _errorCode, errorDescription) => reject(new Error(errorDescription)));
+      void window.webContents.loadURL(url).catch(reject);
+    }),
+    new Promise<void>((_resolve, reject) => {
+      setTimeout(() => reject(new Error('Hidden fingerprint self-test load timed out.')), timeoutMs);
+    }),
+  ]);
+}
+
 function registerIpc(): void {
   ipcMain.handle('profiles:list', () => store.list());
   ipcMain.handle('profiles:create', (_event, input: CreateProfileInput) => store.create(input));
@@ -209,7 +303,6 @@ function registerIpc(): void {
   ipcMain.handle('profiles:open-self-test', async (_event, id: string) => {
     const profile = await store.get(id);
     const page = await prepareSelfTestPage(profile);
-    await configureEmbeddedSession(profile);
     const workspace = openTabInProfile(profile, page.fileUrl);
     const updated = await store.update(id, {
       tabs: workspace.tabs,
@@ -222,6 +315,40 @@ function registerIpc(): void {
     });
     await store.recordHistory(id, 'launched', 'opened embedded fingerprint self-test');
     notifyProfilesChanged();
+    void runHiddenSelfTestCapture(updated, page.fileUrl)
+      .then(async ({ report, summary }) => {
+        const current = await store.get(id);
+        if (current.selfTestUrl !== page.fileUrl) {
+          return;
+        }
+        if (!report || !summary) {
+          await store.update(id, {
+            selfTestSummary: 'self-test capture timed out',
+            lastError: 'Hidden fingerprint self-test did not return a result before timeout.',
+            launchTrace: [...(current.launchTrace ?? []), 'embedded self-test timed out'].slice(-12),
+          });
+          notifyProfilesChanged();
+          return;
+        }
+        await store.update(id, {
+          selfTestReport: report,
+          selfTestSummary: summary,
+          launchTrace: [...(current.launchTrace ?? []), `embedded self-test completed: ${summary}`].slice(-12),
+        });
+        notifyProfilesChanged();
+      })
+      .catch(async (caught) => {
+        const current = await store.get(id);
+        if (current.selfTestUrl !== page.fileUrl) {
+          return;
+        }
+        await store.update(id, {
+          selfTestSummary: 'self-test failed',
+          lastError: caught instanceof Error ? caught.message : String(caught),
+          launchTrace: [...(current.launchTrace ?? []), 'embedded self-test failed'].slice(-12),
+        });
+        notifyProfilesChanged();
+      });
     return updated;
   });
   ipcMain.handle('profiles:launch', async (_event, id: string) => {
@@ -317,6 +444,7 @@ function registerIpc(): void {
     nativeBrowserView.setBounds(nativeBrowserBounds);
     nativeBrowserView.setAutoResize({ width: false, height: false });
     resetNativeBrowserZoom();
+    scheduleNativeBrowserWidthFit(80);
     if (nativeBrowserView.webContents.getURL() !== url) {
       try {
         await nativeBrowserView.webContents.loadURL(url);
@@ -331,11 +459,16 @@ function registerIpc(): void {
     nativeBrowserBounds = cssRectToBrowserViewBounds(bounds);
     nativeBrowserView?.setBounds(nativeBrowserBounds);
     resetNativeBrowserZoom();
+    scheduleNativeBrowserWidthFit();
   });
   ipcMain.handle('native-browser:hide', () => {
     if (nativeBrowserMetadataTimer) {
       clearTimeout(nativeBrowserMetadataTimer);
       nativeBrowserMetadataTimer = undefined;
+    }
+    if (nativeBrowserWidthFitTimer) {
+      clearTimeout(nativeBrowserWidthFitTimer);
+      nativeBrowserWidthFitTimer = undefined;
     }
     if (mainWindow && nativeBrowserView) {
       mainWindow.removeBrowserView(nativeBrowserView);
@@ -410,7 +543,7 @@ async function applyNativeBrowserFingerprint(profile: BrowserProfile): Promise<v
   }
 }
 
-function attachNativeBrowserProxyAuth(view: BrowserView, profile: BrowserProfile): void {
+function attachNativeBrowserProxyAuth(view: BrowserView | BrowserWindow, profile: BrowserProfile): void {
   view.webContents.on(
     'login',
     (

@@ -79,10 +79,10 @@ describe('browser workspace model', () => {
   });
 
   it('opens the local fingerprint self-test page in the active tab', () => {
-    const updated = openTabInProfile(makeProfile(), 'file:///tmp/profile/fingerprint-self-test.html');
+    const updated = openTabInProfile(makeProfile(), 'file:///tmp/profile/fingerprint-self-test.html?run=abc');
 
-    expect(updated.lastOpenedUrl).toBe('file:///tmp/profile/fingerprint-self-test.html');
-    expect(updated.tabs?.[0]).toMatchObject({ title: 'Fingerprint Self Test', url: 'file:///tmp/profile/fingerprint-self-test.html' });
+    expect(updated.lastOpenedUrl).toBe('file:///tmp/profile/fingerprint-self-test.html?run=abc');
+    expect(updated.tabs?.[0]).toMatchObject({ title: 'Fingerprint Self Test', url: 'file:///tmp/profile/fingerprint-self-test.html?run=abc' });
   });
 });
 

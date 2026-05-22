@@ -41,7 +41,9 @@ export function buildEmbeddedBrowserViewPreferences(profile: BrowserProfile): Em
 }
 
 export function buildEmbeddedCdpSetupCommands(profile: BrowserProfile): CdpCommand[] {
-  return buildCdpSetupCommands(profile.fingerprint, buildFingerprintPreloadScript(profile.fingerprint));
+  return buildCdpSetupCommands(profile.fingerprint, buildFingerprintPreloadScript(profile.fingerprint), undefined, {
+    includeDeviceMetrics: false,
+  });
 }
 
 export function embeddedBrowserViewState(profile: BrowserProfile): Required<EmbeddedBrowserViewState> {

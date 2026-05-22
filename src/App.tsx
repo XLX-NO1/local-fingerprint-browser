@@ -5,8 +5,9 @@ import { filterProfiles, type ProfileGroupFilter } from './profileFilters';
 import { buildSelfTestChecklist } from './selfTestReport';
 import { profileAddressBarUrl } from './embeddedBrowser';
 import { buildDeviceProfileRows } from './deviceProfile';
-import { fingerprintToForm, formToFingerprint, hasFingerprintFormChanges, type FingerprintFormState } from './fingerprintEditor';
+import { applyFingerprintOsPreset, fingerprintToForm, formToFingerprint, hasFingerprintFormChanges, type FingerprintFormState } from './fingerprintEditor';
 import { generateLocalFingerprint } from './localFingerprint';
+import { isFingerprintSelfTestUrl } from './selfTestDisplay';
 
 const PROFILE_COLORS = ['#52ff9b', '#5ee7ff', '#ffd166', '#ff5d73', '#b58cff', '#ff9f43'];
 const DEFAULT_PROFILE_COLOR = PROFILE_COLORS[0];
@@ -19,16 +20,20 @@ export default function App() {
   const [error, setError] = useState<string>();
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isProxyEditorOpen, setIsProxyEditorOpen] = useState(false);
   const [isInspectorCollapsed, setIsInspectorCollapsed] = useState(true);
   const [editingProfile, setEditingProfile] = useState<BrowserProfile>();
+  const [proxyEditingProfile, setProxyEditingProfile] = useState<BrowserProfile>();
   const [chromiumPath, setChromiumPath] = useState('');
   const [detectedChromiumPath, setDetectedChromiumPath] = useState('');
   const [query, setQuery] = useState('');
   const [activeGroup, setActiveGroup] = useState<ProfileGroupFilter>('ALL');
   const [openUrl, setOpenUrl] = useState('https://example.com');
   const [isEditingUrl, setIsEditingUrl] = useState(false);
+  const [proxyFormUrl, setProxyFormUrl] = useState('');
   const mainRef = useRef<HTMLElement | null>(null);
   const nativeBrowserFrameRef = useRef<HTMLDivElement | null>(null);
+  const proxyInputRef = useRef<HTMLInputElement | null>(null);
   const [form, setForm] = useState<CreateProfileInput>({
     name: 'us-store-01',
     group: 'Default',
@@ -55,7 +60,8 @@ export default function App() {
     () => filterProfiles(sortedProfiles, { group: activeGroup, query }),
     [activeGroup, query, sortedProfiles],
   );
-  const isModalOpen = isEditorOpen || isSettingsOpen;
+  const isSelfTestView = isFingerprintSelfTestUrl(selected?.lastOpenedUrl);
+  const isModalOpen = isEditorOpen || isSettingsOpen || isProxyEditorOpen;
   const groupCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const profile of profiles) {
@@ -79,10 +85,21 @@ export default function App() {
     }
   }, [isEditingUrl, selected?.id, selected?.activeTabId, selected?.lastOpenedUrl, selected?.tabs]);
 
+  useEffect(() => {
+    if (!isProxyEditorOpen) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      proxyInputRef.current?.focus();
+      proxyInputRef.current?.select();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [isProxyEditorOpen]);
+
   const syncNativeBrowserView = useCallback(() => {
     const frame = nativeBrowserFrameRef.current;
     const main = mainRef.current;
-    if (!frame || !main || !selected?.lastOpenedUrl || isModalOpen) {
+    if (isSelfTestView || !frame || !main || !selected?.lastOpenedUrl || isModalOpen) {
       void window.api.hideNativeBrowserView?.();
       return;
     }
@@ -92,18 +109,38 @@ export default function App() {
     const bottom = Math.min(rect.bottom, mainRect.bottom);
     const bounds = { x: rect.left, y: rect.top, width: Math.max(0, right - rect.left), height: Math.max(0, bottom - rect.top) };
     void window.api.showNativeBrowserView?.(selected.id, selected.lastOpenedUrl, bounds);
-  }, [isModalOpen, selected?.id, selected?.lastOpenedUrl]);
+  }, [isModalOpen, isSelfTestView, selected?.id, selected?.lastOpenedUrl]);
+
+  const scheduleNativeBrowserViewSync = useCallback(() => {
+    syncNativeBrowserView();
+    const frame = window.requestAnimationFrame(syncNativeBrowserView);
+    const timer = window.setTimeout(syncNativeBrowserView, 80);
+    const lateTimer = window.setTimeout(syncNativeBrowserView, 240);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      window.clearTimeout(lateTimer);
+    };
+  }, [syncNativeBrowserView]);
 
   useEffect(() => {
     if (isModalOpen) {
       void window.api.hideNativeBrowserView?.();
       return;
     }
-    syncNativeBrowserView();
-  }, [isModalOpen, syncNativeBrowserView]);
+    return scheduleNativeBrowserViewSync();
+  }, [isModalOpen, scheduleNativeBrowserViewSync]);
 
   useEffect(() => {
-    if (!selected?.lastOpenedUrl || isModalOpen) {
+    if (isSelfTestView || !selected?.lastOpenedUrl || isModalOpen) {
+      void window.api.hideNativeBrowserView?.();
+      return undefined;
+    }
+    return scheduleNativeBrowserViewSync();
+  }, [isInspectorCollapsed, isModalOpen, isSelfTestView, scheduleNativeBrowserViewSync, selected?.activeTabId, selected?.fingerprint.id, selected?.lastOpenedUrl]);
+
+  useEffect(() => {
+    if (isSelfTestView || !selected?.lastOpenedUrl || isModalOpen) {
       void window.api.hideNativeBrowserView?.();
       return undefined;
     }
@@ -115,13 +152,15 @@ export default function App() {
     const observer = new ResizeObserver(onResize);
     observer.observe(frame);
     window.addEventListener('resize', onResize);
-    const timer = window.setTimeout(syncNativeBrowserView, 0);
+    window.visualViewport?.addEventListener('resize', onResize);
+    const cancelScheduledSync = scheduleNativeBrowserViewSync();
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', onResize);
-      window.clearTimeout(timer);
+      window.visualViewport?.removeEventListener('resize', onResize);
+      cancelScheduledSync();
     };
-  }, [isModalOpen, selected?.lastOpenedUrl, syncNativeBrowserView]);
+  }, [isModalOpen, isSelfTestView, scheduleNativeBrowserViewSync, selected?.lastOpenedUrl, syncNativeBrowserView]);
 
   async function loadSettings() {
     const settings = await window.api.getSettings();
@@ -212,6 +251,34 @@ export default function App() {
     });
     setFingerprint(profile ? fingerprintToForm(profile.fingerprint) : DEFAULT_FORM_FINGERPRINT);
     setIsEditorOpen(true);
+  }
+
+  function openProxyEditor(profile: BrowserProfile) {
+    setProxyEditingProfile(profile);
+    setProxyFormUrl(formatProxyInput(profile.proxy));
+    setIsProxyEditorOpen(true);
+  }
+
+  async function saveProxyProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!proxyEditingProfile) {
+      return;
+    }
+    try {
+      const nextProxy = parseProxyInput(proxyFormUrl);
+      await window.api.updateProfile(proxyEditingProfile.id, {
+        proxy: nextProxy,
+        selfTestUrl: undefined,
+        selfTestSummary: undefined,
+        selfTestReport: undefined,
+        launchTrace: [...(proxyEditingProfile.launchTrace ?? []), nextProxy ? 'proxy updated' : 'proxy cleared'].slice(-12),
+      });
+      setIsProxyEditorOpen(false);
+      setProxyEditingProfile(undefined);
+      await refreshProfiles();
+    } catch (caught) {
+      setError(toMessage(caught));
+    }
   }
 
   async function openWebsite(profile: BrowserProfile) {
@@ -330,6 +397,7 @@ export default function App() {
 
   async function regenerateFingerprint(profile: BrowserProfile) {
     try {
+      await window.api.hideNativeBrowserView?.();
       const updated = await window.api.regenerateProfileFingerprint(profile.id);
       setSelectedId(updated.id);
       await refreshProfiles();
@@ -408,7 +476,7 @@ export default function App() {
                 <div className="user-actions">
                   <button type="button" onClick={() => openEditor(profile)}>编辑</button>
                   <button type="button" onClick={() => void duplicate(profile)}>复制</button>
-                  <button type="button" onClick={() => void checkProxy(profile)}>代理</button>
+                  <button type="button" onClick={() => openProxyEditor(profile)}>设置代理</button>
                   <button type="button" onClick={() => void remove(profile)}>删除</button>
                 </div>
               ) : null}
@@ -459,9 +527,13 @@ export default function App() {
         <section className="browser-panel full-browser">
           {selected ? (
             selected.lastOpenedUrl ? (
-              <div className="native-browser-frame" ref={nativeBrowserFrameRef}>
-                <div className="native-browser-hint">CHROMIUM VIEW</div>
-              </div>
+              isSelfTestView ? (
+                <SelfTestReportView profile={selected} />
+              ) : (
+                <div className="native-browser-frame" ref={nativeBrowserFrameRef}>
+                  <div className="native-browser-hint">CHROMIUM VIEW</div>
+                </div>
+              )
             ) : (
               <div className="browser-empty">
                 <div className="empty-title">内嵌浏览器待命</div>
@@ -527,7 +599,7 @@ export default function App() {
             </div>
             <label>
               代理 URL
-              <input placeholder="socks5://127.0.0.1:1080" value={form.proxyUrl} onChange={(event) => setForm({ ...form, proxyUrl: event.target.value })} />
+              <input ref={proxyInputRef} placeholder="socks5://127.0.0.1:1080" value={form.proxyUrl} onChange={(event) => setForm({ ...form, proxyUrl: event.target.value })} />
             </label>
             <label>
               备注
@@ -544,6 +616,28 @@ export default function App() {
               </button>
               <button className="primary" type="submit">
                 {editingProfile ? '保存' : '创建'}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {isProxyEditorOpen ? (
+        <div className="modal-backdrop">
+          <form className="proxy-modal" onSubmit={(event) => void saveProxyProfile(event)}>
+            <div className="modal-title">PROXY SETTINGS</div>
+            <div className="trace">profile: {proxyEditingProfile?.name ?? 'unknown'}</div>
+            <label>
+              代理 URL
+              <input ref={proxyInputRef} placeholder="socks5://127.0.0.1:1080" value={proxyFormUrl} onChange={(event) => setProxyFormUrl(event.target.value)} />
+            </label>
+            <div className="trace">留空保存为直连。支持 http://、https://、socks5://，带账号密码也可以。</div>
+            <div className="modal-actions">
+              <button type="button" onClick={() => { setIsProxyEditorOpen(false); setProxyEditingProfile(undefined); }}>
+                取消
+              </button>
+              <button className="primary" type="submit">
+                保存代理
               </button>
             </div>
           </form>
@@ -589,8 +683,8 @@ function Inspector({
   const deviceRows = buildDeviceProfileRows(profile.fingerprint);
 
   return (
-    <>
-      <Panel title="selected profile" meta={profile.name}>
+    <div className="inspector-panels">
+      <Panel panelId="selected-profile" title="selected profile" meta={profile.name} compact>
         <Kv label="user-data-dir" value={profile.userDataDir} />
         <Kv label="proxy" value={profile.proxy ? `${profile.proxy.type}://${profile.proxy.host}:${profile.proxy.port}` : 'direct'} />
         <Kv label="proxy check" value={profile.proxy?.lastCheckStatus ? `${profile.proxy.lastCheckStatus}${profile.proxy.lastCheckLatencyMs ? ` · ${profile.proxy.lastCheckLatencyMs}ms` : ''}` : 'not checked'} />
@@ -603,7 +697,7 @@ function Inspector({
         <Kv label="test result" value={profile.selfTestSummary ?? 'pending'} />
         {profile.lastError ? <div className="trace error-trace">{profile.lastError}</div> : null}
       </Panel>
-      <Panel title="fingerprint mask" meta="L2+">
+      <Panel panelId="fingerprint-mask" title="fingerprint mask" meta="L2+" compact>
         <Kv label="consistency" value="JS layer configured" />
         <Kv label="network ip" value={profile.proxy ? 'proxy exit ip' : 'direct ip'} />
         <div className="bar"><i /></div>
@@ -617,12 +711,12 @@ function Inspector({
           ))}
         </div>
       </Panel>
-      <Panel title="device profile" meta={profile.fingerprint.id}>
+      <Panel panelId="device-profile" title="device profile" meta={profile.fingerprint.id} compact>
         {deviceRows.map((row) => (
           <Kv label={row.label} value={row.value} key={row.label} />
         ))}
       </Panel>
-      <Panel title="self-test report" meta={profile.selfTestSummary ?? 'pending'}>
+      <Panel panelId="self-test-report" title="self-test report" meta={profile.selfTestSummary ?? 'pending'}>
         {network ? <Kv label="exit ip" value={network.publicIp ? `${network.publicIp}${network.proxyConfigured ? ' · proxy' : ' · direct'}` : network.error ?? 'not detected'} /> : null}
         {webrtc ? <Kv label="webrtc" value={`${webrtc.candidateCount ?? 0} candidates · ${(webrtc.webrtcLeakRisk ?? webrtc.leakRisk) ? 'risk' : 'ok'}`} /> : null}
         <div className="chips">
@@ -633,18 +727,70 @@ function Inspector({
             : <span className="chip">pending</span>}
         </div>
       </Panel>
-      <Panel title="launch trace" meta="local">
+      <Panel panelId="launch-trace" title="launch trace" meta="local" initialCollapsed>
         {(profile.launchTrace && profile.launchTrace.length > 0 ? profile.launchTrace : ['isolated browser dir pending', 'proxy arg builder ready', 'fingerprint extension path ready']).map((line) => (
           <div className="trace" key={line}>{line.startsWith('cdp degraded') ? '△' : '✓'} {line}</div>
         ))}
       </Panel>
-      <Panel title="history" meta={`${profile.history?.length ?? 0} events`}>
+      <Panel panelId="history" title="history" meta={`${profile.history?.length ?? 0} events`} initialCollapsed>
         {(profile.history && profile.history.length > 0 ? profile.history.slice(-6).reverse() : [{ id: 'empty', type: 'created', message: 'no history yet', createdAt: '' }]).map((event) => (
           <div className="trace" key={event.id}>[{event.type}] {event.message}</div>
         ))}
       </Panel>
-    </>
+    </div>
   );
+}
+
+function SelfTestReportView({ profile }: { profile: BrowserProfile }) {
+  const report = profile.selfTestReport;
+  const expected = report?.expected as Record<string, unknown> | undefined;
+  const observed = report?.observed as Record<string, unknown> | undefined;
+  const webgl = report?.webgl as Record<string, unknown> | undefined;
+  const network = report?.network as Record<string, unknown> | undefined;
+  const webrtc = report?.webrtc as Record<string, unknown> | undefined;
+
+  return (
+    <div className="self-test-view">
+      <div className="self-test-head">
+        <div>
+          <h1>FINGERPRINT SELF TEST</h1>
+          <div className="trace">profile: {profile.name} · {profile.selfTestSummary ?? 'running in hidden engine'}</div>
+        </div>
+        <div className={profile.selfTestSummary ? 'self-test-status ok' : 'self-test-status'}>
+          {profile.selfTestSummary ?? 'PENDING'}
+        </div>
+      </div>
+      <div className="self-test-grid">
+        <SelfTestBox title="Expected Profile" value={expected ?? expectedFromProfile(profile)} />
+        <SelfTestBox title="Observed Browser" value={observed ?? { status: 'waiting for hidden Chromium capture' }} />
+        <SelfTestBox title="Canvas / Network" value={{ canvasHash: report?.canvasHash ?? 'pending', network: network ?? 'pending' }} />
+        <SelfTestBox title="WebGL / WebRTC" value={{ webgl: webgl ?? 'pending', webrtc: webrtc ?? 'pending' }} />
+      </div>
+    </div>
+  );
+}
+
+function SelfTestBox({ title, value }: { title: string; value: unknown }) {
+  return (
+    <section className="self-test-box">
+      <h2>{title}</h2>
+      <pre>{JSON.stringify(value, null, 2)}</pre>
+    </section>
+  );
+}
+
+function expectedFromProfile(profile: BrowserProfile): Record<string, unknown> {
+  return {
+    profileId: profile.id,
+    profileName: profile.name,
+    userAgent: profile.fingerprint.userAgent,
+    platform: profile.fingerprint.platform,
+    languages: profile.fingerprint.languages,
+    timezone: profile.fingerprint.timezone,
+    screen: `${profile.fingerprint.screenWidth}x${profile.fingerprint.screenHeight}`,
+    webglVendor: profile.fingerprint.webglVendor,
+    webglRenderer: profile.fingerprint.webglRenderer,
+  };
 }
 
 function FingerprintEditor({
@@ -665,7 +811,7 @@ function FingerprintEditor({
       <div className="fingerprint-form-grid">
         <label>
           操作系统
-          <select value={fingerprint.os} onChange={(event) => onChange({ ...fingerprint, os: event.target.value as FingerprintFormState['os'] })}>
+          <select value={fingerprint.os} onChange={(event) => onChange(applyFingerprintOsPreset(fingerprint, event.target.value as FingerprintFormState['os']))}>
             <option value="windows">Windows</option>
             <option value="macos">macOS</option>
             <option value="linux">Linux</option>
@@ -746,17 +892,47 @@ function FingerprintEditor({
 
 function EmptyInspector() {
   return (
-    <Panel title="selected profile" meta="none">
-      <div className="trace">创建或选择一个环境后，这里会显示代理、指纹和启动状态。</div>
-    </Panel>
+    <div className="inspector-panels">
+      <Panel panelId="empty-profile" title="selected profile" meta="none">
+        <div className="trace">创建或选择一个环境后，这里会显示代理、指纹和启动状态。</div>
+      </Panel>
+    </div>
   );
 }
 
-function Panel({ title, meta, children }: { title: string; meta: string; children: React.ReactNode }) {
+function Panel({
+  panelId,
+  title,
+  meta,
+  children,
+  compact = false,
+  initialCollapsed = false,
+}: {
+  panelId: string;
+  title: string;
+  meta: string;
+  children: React.ReactNode;
+  compact?: boolean;
+  initialCollapsed?: boolean;
+}) {
+  const [isCollapsed, setIsCollapsed] = useState(initialCollapsed);
+
+  useEffect(() => {
+    setIsCollapsed(initialCollapsed);
+  }, [initialCollapsed, panelId]);
+
   return (
-    <section className="panel">
-      <div className="panel-title"><span>{title}</span><span>{meta}</span></div>
-      <div className="panel-body">{children}</div>
+    <section className={`panel ${compact ? 'compact' : ''} ${isCollapsed ? 'collapsed' : ''}`} data-panel-id={panelId}>
+      <button
+        className="panel-title panel-title-button"
+        type="button"
+        aria-expanded={!isCollapsed}
+        onClick={() => setIsCollapsed((value) => !value)}
+      >
+        <span>{isCollapsed ? '+' : '-' } {title}</span>
+        <span>{meta}</span>
+      </button>
+      {!isCollapsed ? <div className="panel-body">{children}</div> : null}
     </section>
   );
 }

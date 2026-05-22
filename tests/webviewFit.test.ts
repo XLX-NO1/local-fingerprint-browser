@@ -28,6 +28,6 @@ describe('webview fit zoom', () => {
     expect(measurePageScript()).toContain('scrollHeight');
     expect(measurePageScript()).toContain('getBoundingClientRect');
     expect(measurePageScript()).toContain('elementBottom');
-    expect(measurePageScript()).toContain('window.scrollTo(0, 0)');
+    expect(measurePageScript()).not.toContain('window.scrollTo');
   });
 });

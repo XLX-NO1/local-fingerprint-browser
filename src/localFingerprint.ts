@@ -1,28 +1,5 @@
 import type { FingerprintConfig } from './types';
-
-const OS_PROFILES = [
-  {
-    os: 'windows',
-    platform: 'Win32',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    webglVendor: 'Google Inc. (NVIDIA)',
-    webglRenderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)',
-  },
-  {
-    os: 'macos',
-    platform: 'MacIntel',
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    webglVendor: 'Google Inc. (Apple)',
-    webglRenderer: 'ANGLE (Apple, Apple M2, OpenGL 4.1)',
-  },
-  {
-    os: 'linux',
-    platform: 'Linux x86_64',
-    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    webglVendor: 'Google Inc. (Intel)',
-    webglRenderer: 'ANGLE (Intel, Mesa Intel(R) UHD Graphics, OpenGL 4.6)',
-  },
-] as const;
+import { allOsPresets } from './fingerprintPresets';
 
 const LANGUAGE_SETS = [
   ['en-US', 'en'],
@@ -34,7 +11,8 @@ const TIMEZONES = ['America/New_York', 'Asia/Tokyo', 'Europe/Berlin', 'Asia/Shan
 
 export function generateLocalFingerprint(seed: string): FingerprintConfig {
   const random = mulberry32(hashSeed(seed));
-  const osProfile = OS_PROFILES[pickIndex(random, OS_PROFILES.length)];
+  const presets = allOsPresets();
+  const osProfile = presets[pickIndex(random, presets.length)];
   const languages = LANGUAGE_SETS[pickIndex(random, LANGUAGE_SETS.length)];
   const timezone = TIMEZONES[pickIndex(random, TIMEZONES.length)];
   const screen = [
@@ -49,7 +27,7 @@ export function generateLocalFingerprint(seed: string): FingerprintConfig {
     id: `fp-${hashSeed(seed).toString(16)}`,
     os: osProfile.os,
     browserVersion: '126.0.0.0',
-    userAgent: osProfile.userAgent,
+    userAgent: `Mozilla/5.0 (${osProfile.userAgentOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36`,
     platform: osProfile.platform,
     languages,
     timezone,

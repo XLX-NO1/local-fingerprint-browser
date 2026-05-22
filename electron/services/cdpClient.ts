@@ -23,6 +23,10 @@ interface CdpClientOptions {
   retryDelayMs?: number;
 }
 
+interface CdpSetupOptions {
+  includeDeviceMetrics?: boolean;
+}
+
 export class CdpClient {
   private readonly baseUrl: string;
   private readonly retries: number;
@@ -65,7 +69,13 @@ export class CdpClient {
   }
 }
 
-export function buildCdpSetupCommands(fingerprint: FingerprintConfig, preloadScript: string, navigateUrl?: string): CdpCommand[] {
+export function buildCdpSetupCommands(
+  fingerprint: FingerprintConfig,
+  preloadScript: string,
+  navigateUrl?: string,
+  options: CdpSetupOptions = {},
+): CdpCommand[] {
+  const includeDeviceMetrics = options.includeDeviceMetrics ?? true;
   const commands: CdpCommand[] = [
     {
       method: 'Page.enable',
@@ -104,7 +114,7 @@ export function buildCdpSetupCommands(fingerprint: FingerprintConfig, preloadScr
       method: 'Emulation.setLocaleOverride',
       params: { locale: fingerprint.languages[0] },
     },
-    {
+    ...(includeDeviceMetrics ? [{
       method: 'Emulation.setDeviceMetricsOverride',
       params: {
         width: fingerprint.screenWidth,
@@ -112,7 +122,7 @@ export function buildCdpSetupCommands(fingerprint: FingerprintConfig, preloadScr
         deviceScaleFactor: 1,
         mobile: false,
       },
-    },
+    }] : []),
   ];
 
   if (navigateUrl) {

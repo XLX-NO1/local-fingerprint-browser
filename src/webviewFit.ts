@@ -33,7 +33,6 @@ export function fitPageResult(viewport: FitSize, content: FitSize): FitPageResul
 
 export function measurePageScript(): string {
   return `(() => {
-    window.scrollTo(0, 0);
     const body = document.body;
     const doc = document.documentElement;
     let elementRight = 0;

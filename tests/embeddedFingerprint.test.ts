@@ -52,7 +52,7 @@ describe('embedded fingerprint helpers', () => {
     expect(buildAcceptLanguageHeader(['zh-CN', 'zh', 'en-US'])).toBe('zh-CN,zh;q=0.9,en-US;q=0.8');
   });
 
-  it('builds CDP setup commands for BrowserView main-world fingerprint injection', () => {
+  it('builds CDP setup commands for BrowserView main-world fingerprint injection without changing viewport size', () => {
     const profile = makeProfile(join(root, 'user-data'));
     const commands = buildEmbeddedCdpSetupCommands(profile);
 
@@ -64,15 +64,7 @@ describe('embedded fingerprint helpers', () => {
       method: 'Emulation.setTimezoneOverride',
       params: { timezoneId: profile.fingerprint.timezone },
     });
-    expect(commands).toContainEqual({
-      method: 'Emulation.setDeviceMetricsOverride',
-      params: {
-        width: profile.fingerprint.screenWidth,
-        height: profile.fingerprint.screenHeight,
-        deviceScaleFactor: 1,
-        mobile: false,
-      },
-    });
+    expect(commands.map((command) => command.method)).not.toContain('Emulation.setDeviceMetricsOverride');
   });
 
   it('requires recreating the native BrowserView when proxy identity changes', () => {

@@ -1,4 +1,5 @@
 import type { FingerprintConfig } from './types';
+import { pickOsPreset } from './fingerprintPresets';
 
 export type FingerprintFormState = {
   os: FingerprintConfig['os'];
@@ -75,6 +76,37 @@ export function hasFingerprintFormChanges(base: FingerprintConfig, form: Fingerp
     const field = key as keyof FingerprintFormState;
     return current[field] !== form[field];
   });
+}
+
+export function applyFingerprintOsPreset(
+  form: FingerprintFormState,
+  os: FingerprintConfig['os'],
+  random: () => number = Math.random,
+): FingerprintFormState {
+  const preset = pickOsPreset(os, random);
+  return {
+    ...form,
+    os,
+    platform: preset.platform,
+    userAgent: replaceUserAgentOs(form.userAgent, preset.userAgentOs, form.browserVersion),
+    webglVendor: preset.webglVendor,
+    webglRenderer: preset.webglRenderer,
+  };
+}
+
+function replaceUserAgentOs(userAgent: string, userAgentOs: string, browserVersion: string): string {
+  const chromeVersion = browserVersion.trim() || extractChromeVersion(userAgent) || '126.0.0.0';
+  const next = userAgent.trim()
+    ? userAgent.replace(/Mozilla\/5\.0 \([^)]+\)/, `Mozilla/5.0 (${userAgentOs})`)
+    : `Mozilla/5.0 (${userAgentOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
+  if (/Chrome\/[^\s]+/.test(next)) {
+    return next.replace(/Chrome\/[^\s]+/, `Chrome/${chromeVersion}`);
+  }
+  return `${next} Chrome/${chromeVersion}`;
+}
+
+function extractChromeVersion(userAgent: string): string | undefined {
+  return userAgent.match(/Chrome\/([^\s]+)/)?.[1];
 }
 
 function parseList(value: string, fallback: string[]): string[] {

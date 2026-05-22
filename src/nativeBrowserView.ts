@@ -1,6 +1,7 @@
 import type { FitSize } from './webviewFit';
 
-export const FIXED_BROWSER_ZOOM = 0.9;
+export const FIXED_BROWSER_ZOOM = 1;
+export const MIN_NATIVE_WIDTH_FIT_ZOOM = 0.5;
 
 export type BrowserViewBounds = FitSize & {
   x: number;
@@ -20,5 +21,6 @@ export function computeWidthFitZoom(viewport: BrowserViewBounds, content: FitSiz
   if (viewport.width <= 0 || content.width <= 0) {
     return 1;
   }
-  return Number(Math.min(1, viewport.width / content.width).toFixed(3));
+  const zoom = Math.min(1, viewport.width / content.width);
+  return Number(Math.max(MIN_NATIVE_WIDTH_FIT_ZOOM, zoom).toFixed(3));
 }
