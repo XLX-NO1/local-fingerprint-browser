@@ -134,6 +134,9 @@ function titleFromUrl(url: string): string {
   if (url === 'about:blank') {
     return 'blank';
   }
+  if (url.endsWith('/fingerprint-self-test.html')) {
+    return 'Fingerprint Self Test';
+  }
   const parsed = new URL(url);
   if (parsed.protocol === 'file:') {
     return decodeURIComponent(parsed.pathname.split('/').pop() || 'file');

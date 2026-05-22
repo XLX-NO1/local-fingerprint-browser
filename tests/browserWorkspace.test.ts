@@ -82,7 +82,7 @@ describe('browser workspace model', () => {
     const updated = openTabInProfile(makeProfile(), 'file:///tmp/profile/fingerprint-self-test.html');
 
     expect(updated.lastOpenedUrl).toBe('file:///tmp/profile/fingerprint-self-test.html');
-    expect(updated.tabs?.[0]).toMatchObject({ title: 'fingerprint-self-test.html', url: 'file:///tmp/profile/fingerprint-self-test.html' });
+    expect(updated.tabs?.[0]).toMatchObject({ title: 'Fingerprint Self Test', url: 'file:///tmp/profile/fingerprint-self-test.html' });
   });
 });
 

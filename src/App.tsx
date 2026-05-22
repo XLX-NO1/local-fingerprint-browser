@@ -27,6 +27,7 @@ export default function App() {
   const [activeGroup, setActiveGroup] = useState<ProfileGroupFilter>('ALL');
   const [openUrl, setOpenUrl] = useState('https://example.com');
   const [isEditingUrl, setIsEditingUrl] = useState(false);
+  const mainRef = useRef<HTMLElement | null>(null);
   const nativeBrowserFrameRef = useRef<HTMLDivElement | null>(null);
   const [form, setForm] = useState<CreateProfileInput>({
     name: 'us-store-01',
@@ -80,12 +81,16 @@ export default function App() {
 
   const syncNativeBrowserView = useCallback(() => {
     const frame = nativeBrowserFrameRef.current;
-    if (!frame || !selected?.lastOpenedUrl || isModalOpen) {
+    const main = mainRef.current;
+    if (!frame || !main || !selected?.lastOpenedUrl || isModalOpen) {
       void window.api.hideNativeBrowserView?.();
       return;
     }
     const rect = frame.getBoundingClientRect();
-    const bounds = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+    const mainRect = main.getBoundingClientRect();
+    const right = Math.min(rect.right, mainRect.right);
+    const bottom = Math.min(rect.bottom, mainRect.bottom);
+    const bounds = { x: rect.left, y: rect.top, width: Math.max(0, right - rect.left), height: Math.max(0, bottom - rect.top) };
     void window.api.showNativeBrowserView?.(selected.id, selected.lastOpenedUrl, bounds);
   }, [isModalOpen, selected?.id, selected?.lastOpenedUrl]);
 
@@ -432,7 +437,7 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="main">
+      <main className="main" ref={mainRef}>
         <form className="browser-toolbar" onSubmit={(event) => { event.preventDefault(); if (selected) void openWebsite(selected); }}>
           <button type="button" disabled={!selected?.lastOpenedUrl} onClick={() => void goBackNativeBrowserView()} title="后退">←</button>
           <button type="button" disabled={!selected?.lastOpenedUrl} onClick={() => void goForwardNativeBrowserView()} title="前进">→</button>

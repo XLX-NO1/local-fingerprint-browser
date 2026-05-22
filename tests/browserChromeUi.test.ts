@@ -29,6 +29,12 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('hideNativeBrowserView');
   });
 
+  it('clips native BrowserView bounds to the main workspace so it cannot cover the inspector', () => {
+    expect(appSource).toContain('mainRef');
+    expect(appSource).toContain('Math.min(rect.right, mainRect.right)');
+    expect(appSource).toContain('width: Math.max(0, right - rect.left)');
+  });
+
   it('exposes compact fingerprint actions in the inspector', () => {
     expect(appSource).toContain('regenerateFingerprint');
     expect(appSource).toContain('openFingerprintSelfTest');
