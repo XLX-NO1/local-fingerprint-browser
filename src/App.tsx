@@ -5,9 +5,13 @@ import { filterProfiles, type ProfileGroupFilter } from './profileFilters';
 import { buildSelfTestChecklist } from './selfTestReport';
 import { profileAddressBarUrl } from './embeddedBrowser';
 import { buildDeviceProfileRows } from './deviceProfile';
+import { fingerprintToForm, formToFingerprint, hasFingerprintFormChanges, type FingerprintFormState } from './fingerprintEditor';
+import { generateLocalFingerprint } from './localFingerprint';
 
 const PROFILE_COLORS = ['#52ff9b', '#5ee7ff', '#ffd166', '#ff5d73', '#b58cff', '#ff9f43'];
 const DEFAULT_PROFILE_COLOR = PROFILE_COLORS[0];
+const DEFAULT_CREATE_FINGERPRINT = generateLocalFingerprint('create-profile-default');
+const DEFAULT_FORM_FINGERPRINT = fingerprintToForm(DEFAULT_CREATE_FINGERPRINT);
 
 export default function App() {
   const [profiles, setProfiles] = useState<BrowserProfile[]>([]);
@@ -31,6 +35,7 @@ export default function App() {
     color: DEFAULT_PROFILE_COLOR,
     proxyUrl: '',
   });
+  const [fingerprint, setFingerprint] = useState<FingerprintFormState>(DEFAULT_FORM_FINGERPRINT);
 
   const selected = useMemo(
     () => profiles.find((profile) => profile.id === selectedId) ?? profiles[0],
@@ -132,12 +137,14 @@ export default function App() {
   async function createProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
+      const fingerprintChanged = hasFingerprintFormChanges(DEFAULT_CREATE_FINGERPRINT, fingerprint);
       const created = await window.api.createProfile({
         name: form.name,
         group: form.group,
         notes: form.notes,
         color: form.color,
         proxyUrl: form.proxyUrl?.trim() || undefined,
+        ...(fingerprintChanged ? { fingerprint: formToFingerprint(DEFAULT_CREATE_FINGERPRINT, fingerprint) } : {}),
       });
       setIsEditorOpen(false);
       setEditingProfile(undefined);
@@ -157,12 +164,20 @@ export default function App() {
     }
     try {
       const nextProxy = parseProxyInput(form.proxyUrl ?? '');
+      const fingerprintChanged = hasFingerprintFormChanges(editingProfile.fingerprint, fingerprint);
       await window.api.updateProfile(editingProfile.id, {
         name: form.name,
         group: form.group || 'Default',
         notes: form.notes || '',
         color: form.color || DEFAULT_PROFILE_COLOR,
         proxy: nextProxy,
+        ...(fingerprintChanged ? {
+          fingerprint: formToFingerprint(editingProfile.fingerprint, fingerprint),
+          selfTestUrl: undefined,
+          selfTestSummary: undefined,
+          selfTestReport: undefined,
+          launchTrace: [...(editingProfile.launchTrace ?? []), 'fingerprint customized'].slice(-12),
+        } : {}),
       });
       setIsEditorOpen(false);
       setEditingProfile(undefined);
@@ -190,6 +205,7 @@ export default function App() {
       color: profile?.color ?? DEFAULT_PROFILE_COLOR,
       proxyUrl: formatProxyInput(profile?.proxy),
     });
+    setFingerprint(profile ? fingerprintToForm(profile.fingerprint) : DEFAULT_FORM_FINGERPRINT);
     setIsEditorOpen(true);
   }
 
@@ -512,6 +528,11 @@ export default function App() {
               备注
               <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
             </label>
+            <FingerprintEditor
+              fingerprint={fingerprint}
+              onChange={setFingerprint}
+              meta={editingProfile ? '旧检测结果会在保存后清空' : '不修改则创建随机指纹'}
+            />
             <div className="modal-actions">
               <button type="button" onClick={() => setIsEditorOpen(false)}>
                 取消
@@ -618,6 +639,103 @@ function Inspector({
         ))}
       </Panel>
     </>
+  );
+}
+
+function FingerprintEditor({
+  fingerprint,
+  onChange,
+  meta,
+}: {
+  fingerprint: FingerprintFormState;
+  onChange(next: FingerprintFormState): void;
+  meta: string;
+}) {
+  return (
+    <section className="fingerprint-editor">
+      <div className="modal-subtitle">
+        <span>指纹配置</span>
+        <small>{meta}</small>
+      </div>
+      <div className="fingerprint-form-grid">
+        <label>
+          操作系统
+          <select value={fingerprint.os} onChange={(event) => onChange({ ...fingerprint, os: event.target.value as FingerprintFormState['os'] })}>
+            <option value="windows">Windows</option>
+            <option value="macos">macOS</option>
+            <option value="linux">Linux</option>
+          </select>
+        </label>
+        <label>
+          浏览器版本
+          <input value={fingerprint.browserVersion} onChange={(event) => onChange({ ...fingerprint, browserVersion: event.target.value })} />
+        </label>
+        <label className="wide-field">
+          User-Agent
+          <textarea value={fingerprint.userAgent} onChange={(event) => onChange({ ...fingerprint, userAgent: event.target.value })} />
+        </label>
+        <label>
+          Platform
+          <input value={fingerprint.platform} onChange={(event) => onChange({ ...fingerprint, platform: event.target.value })} />
+        </label>
+        <label>
+          语言
+          <input value={fingerprint.languages} onChange={(event) => onChange({ ...fingerprint, languages: event.target.value })} />
+        </label>
+        <label>
+          时区
+          <input value={fingerprint.timezone} onChange={(event) => onChange({ ...fingerprint, timezone: event.target.value })} />
+        </label>
+        <label>
+          WebRTC
+          <select value={fingerprint.webrtcPolicy} onChange={(event) => onChange({ ...fingerprint, webrtcPolicy: event.target.value as FingerprintFormState['webrtcPolicy'] })}>
+            <option value="proxy-only">proxy-only</option>
+            <option value="disabled">disabled</option>
+            <option value="default">default</option>
+          </select>
+        </label>
+        <label>
+          屏幕宽
+          <input inputMode="numeric" value={fingerprint.screenWidth} onChange={(event) => onChange({ ...fingerprint, screenWidth: event.target.value })} />
+        </label>
+        <label>
+          屏幕高
+          <input inputMode="numeric" value={fingerprint.screenHeight} onChange={(event) => onChange({ ...fingerprint, screenHeight: event.target.value })} />
+        </label>
+        <label>
+          窗口宽
+          <input inputMode="numeric" value={fingerprint.windowWidth} onChange={(event) => onChange({ ...fingerprint, windowWidth: event.target.value })} />
+        </label>
+        <label>
+          窗口高
+          <input inputMode="numeric" value={fingerprint.windowHeight} onChange={(event) => onChange({ ...fingerprint, windowHeight: event.target.value })} />
+        </label>
+        <label>
+          CPU 核心
+          <input inputMode="numeric" value={fingerprint.hardwareConcurrency} onChange={(event) => onChange({ ...fingerprint, hardwareConcurrency: event.target.value })} />
+        </label>
+        <label>
+          内存 GB
+          <input inputMode="numeric" value={fingerprint.deviceMemory} onChange={(event) => onChange({ ...fingerprint, deviceMemory: event.target.value })} />
+        </label>
+        <label>
+          WebGL Vendor
+          <input value={fingerprint.webglVendor} onChange={(event) => onChange({ ...fingerprint, webglVendor: event.target.value })} />
+        </label>
+        <label>
+          WebGL Renderer
+          <input value={fingerprint.webglRenderer} onChange={(event) => onChange({ ...fingerprint, webglRenderer: event.target.value })} />
+        </label>
+        <label>
+          Plugins
+          <input value={fingerprint.plugins} onChange={(event) => onChange({ ...fingerprint, plugins: event.target.value })} />
+        </label>
+        <label>
+          MIME Types
+          <input value={fingerprint.mimeTypes} onChange={(event) => onChange({ ...fingerprint, mimeTypes: event.target.value })} />
+        </label>
+      </div>
+    </section>
   );
 }
 

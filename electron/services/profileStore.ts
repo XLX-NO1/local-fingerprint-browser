@@ -48,7 +48,7 @@ export class ProfileStore {
       notes: input.notes ?? '',
       color: input.color ?? defaultProfileColor(id),
       proxy: input.proxyUrl ? parseProxyUrl(input.proxyUrl) : undefined,
-      fingerprint: generateFingerprint(id),
+      fingerprint: input.fingerprint ?? generateFingerprint(id),
       userDataDir,
       status: 'idle',
       history: [createHistoryEvent('created', 'profile created')],
@@ -249,6 +249,9 @@ function summarizeUpdate(input: UpdateProfileInput): string | undefined {
   }
   if (input.lastError) {
     return input.lastError;
+  }
+  if (input.fingerprint) {
+    return 'fingerprint customized';
   }
   if (input.name || input.group || input.notes || input.color || Object.hasOwn(input, 'proxy')) {
     return 'profile settings updated';

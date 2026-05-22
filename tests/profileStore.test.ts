@@ -37,6 +37,28 @@ describe('ProfileStore', () => {
     expect(profile.color).toMatch(/^#[0-9a-f]{6}$/);
   });
 
+  it('creates a profile with a custom fingerprint when provided', async () => {
+    const base = await store.create({ name: 'base' });
+    const custom = {
+      ...base.fingerprint,
+      id: 'fp-custom-create',
+      os: 'linux' as const,
+      platform: 'Linux x86_64',
+      languages: ['ja-JP', 'ja'],
+      timezone: 'Asia/Tokyo',
+    };
+
+    const profile = await store.create({ name: 'custom-create', fingerprint: custom });
+
+    expect(profile.fingerprint).toMatchObject({
+      id: 'fp-custom-create',
+      os: 'linux',
+      platform: 'Linux x86_64',
+      languages: ['ja-JP', 'ja'],
+      timezone: 'Asia/Tokyo',
+    });
+  });
+
   it('lists profiles after creation', async () => {
     await store.create({ name: 'one' });
     await store.create({ name: 'two' });
@@ -55,6 +77,41 @@ describe('ProfileStore', () => {
     expect(updated.name).toBe('after');
     expect(updated.status).toBe('warning');
     expect(updated.fingerprint.id).toBe(fingerprintId);
+  });
+
+  it('stores custom fingerprint edits and clears stale self-test results', async () => {
+    const created = await store.create({ name: 'custom-fingerprint' });
+    await store.update(created.id, {
+      selfTestUrl: 'file:///tmp/fingerprint-self-test.html',
+      selfTestSummary: '8/8 checks ok',
+      selfTestReport: { matched: { userAgent: true } },
+    });
+
+    const updated = await store.update(created.id, {
+      fingerprint: {
+        ...created.fingerprint,
+        os: 'windows',
+        platform: 'Win32',
+        languages: ['en-US', 'en'],
+        timezone: 'America/New_York',
+        userAgent: 'Mozilla/5.0 custom',
+      },
+      selfTestUrl: undefined,
+      selfTestSummary: undefined,
+      selfTestReport: undefined,
+    });
+
+    expect(updated.fingerprint).toMatchObject({
+      os: 'windows',
+      platform: 'Win32',
+      languages: ['en-US', 'en'],
+      timezone: 'America/New_York',
+      userAgent: 'Mozilla/5.0 custom',
+    });
+    expect(updated.selfTestUrl).toBeUndefined();
+    expect(updated.selfTestSummary).toBeUndefined();
+    expect(updated.selfTestReport).toBeUndefined();
+    expect(updated.history?.at(-1)?.message).toBe('fingerprint customized');
   });
 
   it('deletes a profile', async () => {

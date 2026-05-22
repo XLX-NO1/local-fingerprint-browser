@@ -92,6 +92,7 @@ export type CreateProfileInput = {
   notes?: string;
   color?: string;
   proxyUrl?: string;
+  fingerprint?: FingerprintConfig;
 };
 
 export type UpdateProfileInput = Partial<

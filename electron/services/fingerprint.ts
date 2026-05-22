@@ -1,74 +1,8 @@
 import type { FingerprintConfig } from '../../src/types';
-
-const OS_PROFILES = [
-  {
-    os: 'windows',
-    platform: 'Win32',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    webglVendor: 'Google Inc. (NVIDIA)',
-    webglRenderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)',
-  },
-  {
-    os: 'macos',
-    platform: 'MacIntel',
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    webglVendor: 'Google Inc. (Apple)',
-    webglRenderer: 'ANGLE (Apple, Apple M2, OpenGL 4.1)',
-  },
-  {
-    os: 'linux',
-    platform: 'Linux x86_64',
-    userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    webglVendor: 'Google Inc. (Intel)',
-    webglRenderer: 'ANGLE (Intel, Mesa Intel(R) UHD Graphics, OpenGL 4.6)',
-  },
-] as const;
-
-const LANGUAGE_SETS = [
-  ['en-US', 'en'],
-  ['ja-JP', 'ja', 'en-US'],
-  ['de-DE', 'de', 'en-US'],
-  ['zh-CN', 'zh', 'en-US'],
-];
-
-const TIMEZONES = ['America/New_York', 'Asia/Tokyo', 'Europe/Berlin', 'Asia/Shanghai'];
+import { generateLocalFingerprint } from '../../src/localFingerprint';
 
 export function generateFingerprint(seed: string): FingerprintConfig {
-  const random = mulberry32(hashSeed(seed));
-  const osProfile = OS_PROFILES[pickIndex(random, OS_PROFILES.length)];
-  const languages = LANGUAGE_SETS[pickIndex(random, LANGUAGE_SETS.length)];
-  const timezone = TIMEZONES[pickIndex(random, TIMEZONES.length)];
-  const screen = [
-    [1280, 800],
-    [1366, 768],
-    [1440, 900],
-    [1536, 864],
-    [1920, 1080],
-  ][pickIndex(random, 5)];
-
-  return {
-    id: `fp-${hashSeed(seed).toString(16)}`,
-    os: osProfile.os,
-    browserVersion: '126.0.0.0',
-    userAgent: osProfile.userAgent,
-    platform: osProfile.platform,
-    languages,
-    timezone,
-    screenWidth: screen[0],
-    screenHeight: screen[1],
-    windowWidth: screen[0],
-    windowHeight: screen[1],
-    hardwareConcurrency: [4, 6, 8, 10, 12][pickIndex(random, 5)],
-    deviceMemory: [4, 8, 16][pickIndex(random, 3)],
-    webglVendor: osProfile.webglVendor,
-    webglRenderer: osProfile.webglRenderer,
-    canvasSeed: Math.floor(random() * 1_000_000),
-    audioSeed: Math.floor(random() * 1_000_000),
-    webrtcPolicy: 'proxy-only',
-    mediaDevices: ['default-audio-input', 'default-audio-output'],
-    plugins: ['Chrome PDF Viewer', 'Chromium PDF Viewer'],
-    mimeTypes: ['application/pdf', 'text/pdf'],
-  };
+  return generateLocalFingerprint(seed);
 }
 
 export function buildFingerprintPreloadScript(config: FingerprintConfig): string {
@@ -225,26 +159,4 @@ export function buildFingerprintPreloadScript(config: FingerprintConfig): string
     } catch {}
   }
 })();`;
-}
-
-function pickIndex(random: () => number, length: number): number {
-  return Math.floor(random() * length);
-}
-
-function hashSeed(value: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function mulberry32(seed: number): () => number {
-  return () => {
-    let value = (seed += 0x6d2b79f5);
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
 }

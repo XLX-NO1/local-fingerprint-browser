@@ -37,6 +37,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -761,7 +762,9 @@ button.primary {
 }
 
 .profile-modal {
-  width: min(460px, calc(100vw - 28px));
+  width: min(720px, calc(100vw - 28px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
   border: 1px solid var(--green);
   background: #08110d;
   padding: 16px;
@@ -772,6 +775,21 @@ button.primary {
   color: var(--green);
   text-transform: uppercase;
   margin-bottom: 14px;
+}
+
+.modal-subtitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 8px;
+  color: var(--cyan);
+  text-transform: uppercase;
+}
+
+.modal-subtitle small {
+  color: var(--muted);
+  text-transform: none;
 }
 
 label {
@@ -809,6 +827,7 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   margin-top: 6px;
@@ -819,6 +838,10 @@ textarea {
   border-radius: 0;
 }
 
+select {
+  appearance: none;
+}
+
 .path-input {
   font-size: 11px;
 }
@@ -826,6 +849,27 @@ textarea {
 textarea {
   min-height: 72px;
   resize: vertical;
+}
+
+.fingerprint-editor {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line2);
+}
+
+.fingerprint-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 10px;
+  row-gap: 0;
+}
+
+.fingerprint-form-grid .wide-field {
+  grid-column: 1 / -1;
+}
+
+.fingerprint-form-grid textarea {
+  min-height: 58px;
 }
 
 .modal-actions {

@@ -56,6 +56,17 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('deviceRows.map');
   });
 
+  it('exposes editable fingerprint controls in the profile editor', () => {
+    expect(appSource).toContain('指纹配置');
+    expect(appSource).toContain('fingerprint-form-grid');
+    expect(appSource).toContain('fingerprint.os');
+    expect(appSource).toContain('fingerprint.languages');
+    expect(appSource).toContain('fingerprint.timezone');
+    expect(appSource).toContain('fingerprint.userAgent');
+    expect(appSource).toContain('fingerprint.webglRenderer');
+    expect(appSource).toContain('旧检测结果会在保存后清空');
+  });
+
   it('lets users pick a profile color and shows it in the sidebar', () => {
     expect(appSource).toContain('PROFILE_COLORS');
     expect(appSource).toContain('颜色');
