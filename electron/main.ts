@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, ipcMain, session, webContents, type AuthInfo, type Event, type LoginAuthenticationResponseDetails } from 'electron';
+import { app, BrowserView, BrowserWindow, ipcMain, Menu, nativeImage, session, Tray, webContents, type AuthInfo, type Event, type LoginAuthenticationResponseDetails } from 'electron';
 import { join } from 'node:path';
 import { BrowserLauncher, findChromiumPath } from './services/browserLauncher';
 import { ProfileStore } from './services/profileStore';
@@ -35,6 +35,8 @@ let store: ProfileStore;
 let settingsStore: SettingsStore;
 let launcher: BrowserLauncher | undefined;
 let extensionDir: string;
+let tray: Tray | undefined;
+let isQuitting = false;
 let nativeBrowserView: BrowserView | undefined;
 let nativeBrowserProfileId: string | undefined;
 let nativeBrowserBounds: BrowserViewBounds | undefined;
@@ -74,11 +76,71 @@ function createWindow(): void {
     webPreferences.sandbox = true;
   });
 
+  (mainWindow as BrowserWindow & { on(event: 'minimize', listener: (event: Event) => void): BrowserWindow }).on('minimize', (event: Event) => {
+    event.preventDefault();
+    setTimeout(hideMainWindowToTray, 0);
+  });
+
+  mainWindow.on('close', (event) => {
+    if (isQuitting) {
+      return;
+    }
+    event.preventDefault();
+    hideMainWindowToTray();
+  });
+
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
     void mainWindow.loadFile(join(__dirname, '../../dist/index.html'));
   }
+}
+
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  }
+  if (mainWindow?.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow?.show();
+  mainWindow?.focus();
+}
+
+function hideMainWindowToTray(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  mainWindow.hide();
+}
+
+function createAppTrayIcon(): Electron.NativeImage {
+  const iconPath = app.isPackaged
+    ? join(process.resourcesPath, 'tray-icon-white.png')
+    : join(app.getAppPath(), 'assets/tray-icon-white.png');
+  const icon = nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 });
+  icon.setTemplateImage(false);
+  return icon;
+}
+
+function createTray(): void {
+  if (tray) {
+    return;
+  }
+  tray = new Tray(createAppTrayIcon());
+  tray.setToolTip('Local Fingerprint Browser');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '显示主窗口', click: showMainWindow },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]));
+  tray.on('click', showMainWindow);
 }
 
 function notifyProfilesChanged(): void {
@@ -184,6 +246,17 @@ function attachNativeBrowserTabHandlers(view: BrowserView): void {
 }
 
 function disposeNativeBrowserView(): void {
+  detachNativeBrowserView();
+  if (nativeBrowserView && !nativeBrowserView.webContents.isDestroyed()) {
+    nativeBrowserView.webContents.close();
+  }
+  nativeBrowserView = undefined;
+  nativeBrowserProfileId = undefined;
+  nativeBrowserState = {};
+  nativeBrowserHandlersAttached = false;
+}
+
+function detachNativeBrowserView(): void {
   if (nativeBrowserMetadataTimer) {
     clearTimeout(nativeBrowserMetadataTimer);
     nativeBrowserMetadataTimer = undefined;
@@ -195,19 +268,15 @@ function disposeNativeBrowserView(): void {
   if (mainWindow && nativeBrowserView && nativeBrowserAttached) {
     mainWindow.removeBrowserView(nativeBrowserView);
   }
-  if (nativeBrowserView && !nativeBrowserView.webContents.isDestroyed()) {
-    nativeBrowserView.webContents.close();
-  }
-  nativeBrowserView = undefined;
-  nativeBrowserProfileId = undefined;
-  nativeBrowserState = {};
-  nativeBrowserHandlersAttached = false;
   nativeBrowserAttached = false;
 }
 
 app.on('before-quit', () => {
+  isQuitting = true;
   disposeHiddenSelfTestView();
-  disposeNativeBrowserView();
+  detachNativeBrowserView();
+  tray?.destroy();
+  tray = undefined;
 });
 
 async function captureNativeSelfTestResult(): Promise<void> {
@@ -584,17 +653,22 @@ app.whenReady().then(async () => {
   const chromiumPath = settings.chromiumPath || findChromiumPath();
   launcher = chromiumPath ? new BrowserLauncher(chromiumPath, extensionDir) : undefined;
   registerIpc();
+  createTray();
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+    showMainWindow();
+  });
+
+  app.on('did-become-active', () => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      showMainWindow();
     }
   });
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (isQuitting && process.platform !== 'darwin') {
     app.quit();
   }
 });

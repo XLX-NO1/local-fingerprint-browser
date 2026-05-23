@@ -20,10 +20,20 @@ describe('package desktop build config', () => {
       appId: 'local.fingerprint.browser',
       productName: 'Local Fingerprint Browser',
       files: ['dist/**', 'dist-electron/**', 'fingerprint-extension/**', 'package.json'],
+      extraResources: [
+        {
+          from: 'assets/tray-icon-white.png',
+          to: 'tray-icon-white.png',
+        },
+      ],
       mac: {
         category: 'public.app-category.developer-tools',
         target: ['dir'],
       },
     });
+  });
+
+  it('uses relative renderer assets so the packaged app works from file urls', async () => {
+    await expect(readFile('vite.config.ts', 'utf8')).resolves.toContain("base: './'");
   });
 });

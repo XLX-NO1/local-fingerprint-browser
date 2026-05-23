@@ -117,6 +117,36 @@ describe('browser chrome UI', () => {
     expect(disposeHandler).toContain('nativeBrowserHandlersAttached = false;');
   });
 
+  it('does not explicitly close native BrowserView webContents during app quit', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const beforeQuitHandler = mainSource.slice(
+      mainSource.indexOf("app.on('before-quit'"),
+      mainSource.indexOf('async function captureNativeSelfTestResult'),
+    );
+
+    expect(beforeQuitHandler).toContain('detachNativeBrowserView');
+    expect(beforeQuitHandler).not.toContain('webContents.close');
+  });
+
+  it('supports minimizing the Electron app into a tray menu', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+
+    expect(mainSource).toContain('Tray');
+    expect(mainSource).toContain('Menu');
+    expect(mainSource).toContain('createTray()');
+    expect(mainSource).toContain('hideMainWindowToTray');
+    expect(mainSource).toContain(".on('minimize'");
+    expect(mainSource).toContain("mainWindow.on('close'");
+    expect(mainSource).toContain("app.on('did-become-active'");
+    expect(mainSource).toContain('createAppTrayIcon');
+    expect(mainSource).toContain("join(process.resourcesPath, 'tray-icon-white.png')");
+    expect(mainSource).toContain("join(app.getAppPath(), 'assets/tray-icon-white.png')");
+    expect(mainSource).toContain('resize({ width: 18, height: 18 })');
+    expect(mainSource).toContain('icon.setTemplateImage(false)');
+    expect(mainSource).toContain('显示主窗口');
+    expect(mainSource).toContain('退出');
+  });
+
   it('keeps the hidden native browser frame dark instead of flashing green', () => {
     expect(styles).toMatch(/\.native-browser-frame\s*\{[^}]*background: #050a08;/s);
   });

@@ -1,6 +1,6 @@
 {
   "name": "local-fingerprint-browser",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "main": "dist-electron/electron-entry.js",
   "scripts": {
@@ -27,6 +27,12 @@
       "dist-electron/**",
       "fingerprint-extension/**",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/tray-icon-white.png",
+        "to": "tray-icon-white.png"
+      }
     ],
     "directories": {
       "output": "release"
