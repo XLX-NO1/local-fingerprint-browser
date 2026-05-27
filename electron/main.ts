@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, ipcMain, Menu, nativeImage, session, Tray, webContents, WebContentsView, type AuthInfo, type Event, type LoginAuthenticationResponseDetails, type Session } from 'electron';
+import { app, BrowserView, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray, webContents, WebContentsView, type AuthInfo, type Event, type LoginAuthenticationResponseDetails, type Session } from 'electron';
 import { join } from 'node:path';
 import { BrowserLauncher, findChromiumPath } from './services/browserLauncher';
 import { ProfileStore } from './services/profileStore';
@@ -810,6 +810,14 @@ function registerIpc(): void {
     const cancelled = downloadController.cancel(id);
     notifyProfilesChanged();
     return cancelled;
+  });
+  ipcMain.handle('downloads:show-in-folder', (_event, id: string) => {
+    const savePath = downloadController.showInFolderPath(id);
+    if (!savePath) {
+      return false;
+    }
+    shell.showItemInFolder(savePath);
+    return true;
   });
   ipcMain.handle('native-browser:go-back', () => {
     nativeBrowserController.goBack();

@@ -195,6 +195,9 @@ export function installDevApi(): void {
       download.status = 'cancelled';
       return true;
     },
+    async showDownloadInFolder(id: string) {
+      return Boolean(downloads.find((item) => item.id === id && item.status !== 'progressing' && item.savePath));
+    },
     async goBackNativeBrowserView() {},
     async goForwardNativeBrowserView() {},
     async reloadNativeBrowserView() {},

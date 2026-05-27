@@ -22,6 +22,7 @@ const api: AppApi = {
   getNativeBrowserNavigationState: (profileId: string, tabId: string) => ipcRenderer.invoke('native-browser:navigation-state', profileId, tabId) as Promise<BrowserNavigationState | undefined>,
   listDownloads: (profileId?: string) => ipcRenderer.invoke('downloads:list', profileId) as Promise<DownloadRecord[]>,
   cancelDownload: (id: string) => ipcRenderer.invoke('downloads:cancel', id) as Promise<boolean>,
+  showDownloadInFolder: (id: string) => ipcRenderer.invoke('downloads:show-in-folder', id) as Promise<boolean>,
   goBackNativeBrowserView: () => ipcRenderer.invoke('native-browser:go-back') as Promise<void>,
   goForwardNativeBrowserView: () => ipcRenderer.invoke('native-browser:go-forward') as Promise<void>,
   reloadNativeBrowserView: () => ipcRenderer.invoke('native-browser:reload') as Promise<void>,

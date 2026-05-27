@@ -72,6 +72,14 @@ export class DownloadController {
     return true;
   }
 
+  showInFolderPath(id: string): string | undefined {
+    const record = this.records.get(id);
+    if (!record || record.status === 'progressing') {
+      return undefined;
+    }
+    return record.savePath || undefined;
+  }
+
   list(profileId?: string): DownloadRecord[] {
     const records = [...this.records.values()];
     return profileId ? records.filter((record) => record.profileId === profileId) : records;

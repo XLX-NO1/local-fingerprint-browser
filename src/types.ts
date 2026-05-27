@@ -167,6 +167,7 @@ export interface AppApi {
   getNativeBrowserNavigationState(profileId: string, tabId: string): Promise<BrowserNavigationState | undefined>;
   listDownloads(profileId?: string): Promise<DownloadRecord[]>;
   cancelDownload(id: string): Promise<boolean>;
+  showDownloadInFolder(id: string): Promise<boolean>;
   goBackNativeBrowserView(): Promise<void>;
   goForwardNativeBrowserView(): Promise<void>;
   reloadNativeBrowserView(): Promise<void>;

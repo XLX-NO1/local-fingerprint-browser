@@ -9,15 +9,15 @@
 - 内嵌网页已走 Electron 原生 BrowserView 控制器，按 profile/tab 管理实例。
 - 多环境、代理、标签、收藏、历史、下载、权限策略、证书策略、外部协议拦截、崩溃状态已经有核心链路。
 - 硬件指纹 v2 模型已经落到 `electron/services/fingerprint/model.ts`，并通过 `fingerprintRuntime` 接入 CDP/Accept-Language/UA metadata。
-- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 已有实验开关，浏览器级冒烟已覆盖双路径，下载文件操作和用户可调 zoom 仍需要补。
+- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 已有实验开关，浏览器级冒烟已覆盖双路径，下载文件定位已补，用户可调 zoom 仍需要补。
 
-当前推荐下一步：完善下载文件操作，增加打开文件或显示到文件夹的安全入口。
+当前推荐下一步：增加浏览器 zoom 设置，保持默认 100%，不要恢复动态整页缩放。
 
 ## 基本信息
 
 - 工作目录：`/Users/suweichao/项目/指纹浏览器`
 - 当前分支：`codex/fingerprint-model-spec`
-- 当前版本：`package.json` 为 `1.0.12`
+- 当前版本：`package.json` 为 `1.0.13`
 - 最新提交：以 `git log --oneline -1` 为准
 - 语言：和用户沟通用中文
 - UI 方向：保持终端像素风，但交互要像正常浏览器
@@ -40,9 +40,9 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 
 ## 最近验证基线
 
-截至 `Release v1.0.12`：
+截至 `Release v1.0.13`：
 
-- `npm run test` 通过：37 个测试文件，177 个测试
+- `npm run test` 通过：37 个测试文件，178 个测试
 - `npm run build` 通过
 - `npm run typecheck` 通过
 - `npm run smoke:browser` 通过，覆盖 BrowserView 与 WebContentsView
@@ -121,6 +121,17 @@ npm run build
 - 主进程新增 `ELECTRON_BROWSER_SMOKE=1` 自测模式
 - 冒烟覆盖打开普通页面、target blank 转内部 tab、下载完成、本地自测页打开
 - CDP 指纹注入增加超时降级，避免注入卡住导致网页无法打开
+
+### v1.0.13
+
+完成下载文件定位入口。
+
+- `DownloadController` 新增 `showInFolderPath`
+- 主进程新增 `downloads:show-in-folder` IPC
+- 使用 `shell.showItemInFolder`，不直接执行下载文件
+- preload 和 `AppApi` 暴露 `showDownloadInFolder`
+- inspector 下载面板在非 progressing 且有保存路径时显示“定位”
+- dev mock API 同步补齐该能力
 
 ## 核心目录
 
@@ -226,34 +237,34 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 ## 现在最应该做的事
 
-### 1. 下载文件操作
+### 1. 浏览器 zoom 设置
 
-原因：下载列表已经可见、可取消，但用户还不能从 UI 直接打开文件或显示到文件夹。
+原因：当前固定 100% 缩放符合“不要跳动”的要求，但用户后续可能需要手动调整页面大小。
 
 建议改动：
 
 - `electron/main.ts`
-  - 增加 `downloads:show-in-folder` 或 `downloads:open-file` IPC
-  - 使用 Electron `shell.showItemInFolder`，默认优先显示到文件夹，不自动执行未知文件
+  - 增加 profile 或 app setting 的 zoom 读取
+  - `resetNativeBrowserZoom` 读取用户设置，不恢复动态整页缩放
 - `electron/preload.ts`
   - 暴露对应 API
 - `src/types.ts`
-  - 扩展 `AppApi`
+  - 扩展 settings 或 profile 配置
 - `src/App.tsx`
-  - 下载完成后显示“定位”按钮
-- `tests/downloadController.test.ts` / `tests/browserChromeUi.test.ts`
-  - 补源码和控制器测试
+  - 在设置或 inspector 里增加 80/90/100/110/125 这类明确选项
+- `tests/browserChromeUi.test.ts`
+  - 补 UI 与主进程设置读取约束
 
 验收标准：
 
-- 只有 completed/interrupted/cancelled 等非 progressing 记录显示定位入口
-- 点击定位不会执行下载文件
-- 下载记录缺少路径时 UI 不报错
+- 默认仍是 100%
+- 调整 zoom 不触发动态整页缩放
+- 切 tab 和 reload 后 zoom 保持一致
 
 ## 中期路线
 
-1. 下载增加打开文件/显示文件夹/失败原因展示。
-2. profile 设置中增加浏览器 zoom 选项，不恢复动态整页缩放。
+1. profile 设置中增加浏览器 zoom 选项，不恢复动态整页缩放。
+2. 下载增加失败原因展示。
 3. 代理失败和证书失败在 UI 中做更明确的错误入口。
 4. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
 5. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
@@ -273,8 +284,8 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 后续从这里继续时，推荐按下面顺序提交：
 
-1. `Improve download file actions`
-2. `Add browser zoom setting`
+1. `Add browser zoom setting`
+2. `Show download failure reasons`
 
 ## 快速接手命令
 
@@ -286,10 +297,10 @@ npm run test
 npm run build
 ```
 
-如果只做当前下一步的下载文件操作，先跑相关测试：
+如果只做当前下一步的浏览器 zoom，先跑相关测试：
 
 ```bash
-npm run test -- tests/downloadController.test.ts tests/browserChromeUi.test.ts
+npm run test -- tests/browserChromeUi.test.ts tests/settingsStore.test.ts
 ```
 
 ## 用户明确要求

@@ -270,9 +270,21 @@ describe('browser chrome UI', () => {
   it('shows profile scoped downloads in the inspector', () => {
     expect(appSource).toContain('listDownloads');
     expect(appSource).toContain('cancelDownload');
+    expect(appSource).toContain('showDownloadInFolder');
     expect(appSource).toContain('panelId="downloads"');
     expect(appSource).toContain('className="download-row"');
+    expect(appSource).toContain("download.status !== 'progressing'");
+    expect(appSource).toContain('定位');
     expect(styles).toContain('.download-row');
+
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const preloadSource = readFileSync('electron/preload.ts', 'utf8');
+    const typesSource = readFileSync('src/types.ts', 'utf8');
+    expect(mainSource).toContain("ipcMain.handle('downloads:show-in-folder'");
+    expect(mainSource).toContain('shell.showItemInFolder');
+    expect(mainSource).not.toContain('shell.openPath');
+    expect(preloadSource).toContain('showDownloadInFolder');
+    expect(typesSource).toContain('showDownloadInFolder(id: string): Promise<boolean>');
   });
 
   it('shows a reloadable crash state for the active tab', () => {

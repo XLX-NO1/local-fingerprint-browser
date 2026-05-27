@@ -232,6 +232,17 @@ export default function App() {
     }
   }
 
+  async function showDownloadInFolder(id: string) {
+    try {
+      const shown = await window.api.showDownloadInFolder(id);
+      if (!shown) {
+        setError('下载文件路径不可用');
+      }
+    } catch (caught) {
+      setError(toMessage(caught));
+    }
+  }
+
   async function createProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
@@ -621,6 +632,7 @@ export default function App() {
                 profile={selected}
                 downloads={downloads}
                 onCancelDownload={cancelDownload}
+                onShowDownloadInFolder={showDownloadInFolder}
                 onRegenerateFingerprint={regenerateFingerprint}
                 onOpenSelfTest={openFingerprintSelfTest}
               />
@@ -768,12 +780,14 @@ function Inspector({
   profile,
   downloads,
   onCancelDownload,
+  onShowDownloadInFolder,
   onRegenerateFingerprint,
   onOpenSelfTest,
 }: {
   profile: BrowserProfile;
   downloads: DownloadRecord[];
   onCancelDownload(id: string): void;
+  onShowDownloadInFolder(id: string): void;
   onRegenerateFingerprint(profile: BrowserProfile): void;
   onOpenSelfTest(profile: BrowserProfile): void;
 }) {
@@ -840,6 +854,9 @@ function Inspector({
             </div>
             {download.status === 'progressing' ? (
               <button type="button" onClick={() => onCancelDownload(download.id)}>取消</button>
+            ) : null}
+            {download.status !== 'progressing' && download.savePath ? (
+              <button type="button" onClick={() => onShowDownloadInFolder(download.id)}>定位</button>
             ) : null}
           </div>
         )) : <div className="trace">no downloads for this profile</div>}

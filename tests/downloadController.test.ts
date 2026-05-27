@@ -48,4 +48,22 @@ describe('DownloadController', () => {
     expect(cancel).toHaveBeenCalled();
     expect(controller.list('profile-a')[0]).toMatchObject({ status: 'cancelled' });
   });
+
+  it('only exposes a folder reveal path after a download is no longer progressing', () => {
+    const controller = new DownloadController();
+    const id = controller.start({
+      profileId: 'profile-a',
+      url: 'https://example.com/file.zip',
+      filename: 'file.zip',
+      savePath: '/tmp/file.zip',
+      cancel: vi.fn(),
+    });
+
+    expect(controller.showInFolderPath(id)).toBeUndefined();
+
+    controller.finish(id, 'completed');
+
+    expect(controller.showInFolderPath(id)).toBe('/tmp/file.zip');
+    expect(controller.showInFolderPath('missing-download')).toBeUndefined();
+  });
 });
