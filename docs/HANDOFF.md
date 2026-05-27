@@ -2,26 +2,25 @@
 
 更新时间：2026-05-27
 
-## 项目定位
+## 当前结论
 
-这是一个本地 Electron 指纹浏览器 MVP，目标是做一个简单直观的多环境浏览器：
+项目已经从“能打开网页的 Electron MVP”推进到一个可继续演进的本地指纹浏览器骨架：
 
-- 多用户环境，每个环境独立资料、标签页、收藏和登录状态。
-- 支持代理配置和代理连通性检查。
-- 支持基础指纹伪装扩展。
-- 网页在软件内部打开，界面不依赖命令行启动。
-- UI 风格为终端像素风，但交互尽量接近普通浏览器。
+- 内嵌网页已走 Electron 原生 BrowserView 控制器，按 profile/tab 管理实例。
+- 多环境、代理、标签、收藏、历史、下载、权限策略、证书策略、外部协议拦截、崩溃状态已经有核心链路。
+- 硬件指纹 v2 模型已经落到 `electron/services/fingerprint/model.ts`，并通过 `fingerprintRuntime` 接入 CDP/Accept-Language/UA metadata。
+- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 还未切默认，自测页和 inspector 还没完整展示 runtime derived values，真实端到端冒烟仍需要补。
 
-当前重点不是完整商业级反检测，而是先把环境、代理、标签、内嵌网页操作链路打通。
+当前推荐下一步：先把硬件指纹 runtime 的派生结果接进自测页和 inspector，然后补 WebContentsView 实机切换与浏览器级端到端冒烟。
 
-## 技术栈
+## 基本信息
 
-- Electron 39
-- React 19
-- TypeScript
-- Vite
-- Vitest
-- macOS 目录构建通过 `electron-builder`
+- 工作目录：`/Users/suweichao/项目/指纹浏览器`
+- 当前分支：`codex/fingerprint-model-spec`
+- 当前版本：`package.json` 为 `1.0.9`
+- 最新提交：`4246a96 Release v1.0.9`
+- 语言：和用户沟通用中文
+- UI 方向：保持终端像素风，但交互要像正常浏览器
 
 主要脚本：
 
@@ -33,417 +32,21 @@ npm run build
 npm run dist
 ```
 
-如果只想用当前 Vite dev server 打开 Electron，可用：
+如果 Vite 已在 `http://127.0.0.1:5173/` 跑着，只重启 Electron：
 
 ```bash
 VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/suweichao/项目/指纹浏览器
 ```
 
-## 当前运行状态
+## 最近验证基线
 
-当前代码状态：
+截至 `Release v1.0.9`：
 
-- 当前分支：`codex/fingerprint-model-spec`
-- 最新提交：以 `git log --oneline -1` 为准
-- 工作区：提交后干净
-
-最近一次验证：
-
-- `npm run typecheck` 通过
-- `npm run test` 通过，37 个测试文件，173 个测试
+- `npm run test` 通过：37 个测试文件，173 个测试
 - `npm run build` 通过
-- Electron 已能打开本地软件窗口
+- `npm run typecheck` 在前序版本通过；后续提交前仍需要重新跑
 
-## 核心目录
-
-- `src/App.tsx`：主 UI，环境列表、标签列表、地址栏、弹窗、内嵌浏览器占位区域。
-- `src/styles.css`：终端像素风样式和布局。
-- `src/types.ts`：主进程暴露给前端的 API 类型和核心数据结构。
-- `src/browserWorkspace.ts`：纯函数管理标签页、收藏、active tab、URL 元数据。
-- `src/embeddedBrowser.ts`：内嵌浏览器相关前端 helper，包括地址栏取 active tab URL。
-- `src/nativeBrowserView.ts`：Electron BrowserView 坐标和固定缩放常量。
-- `electron/main.ts`：Electron 主进程、IPC、原生 BrowserView 控制器装配、代理 session、标签事件拦截。
-- `electron/services/nativeBrowserViewController.ts`：按 tab 管理原生 BrowserView 生命周期、显示/隐藏、尺寸、导航命令和销毁。
-- `electron/preload.ts`：暴露安全 IPC API 到 renderer。
-- `electron/services/profileStore.ts`：环境 JSON 持久化，数据位置在 Electron `userData/app-data`。
-- `electron/services/browserLauncher.ts`：外部 Chromium/Chrome 启动能力，保留用于独立浏览器进程。
-- `electron/services/fingerprint.ts`：生成环境指纹配置。
-- `fingerprint-extension/content.js`：指纹伪装内容脚本。
-- `tests/`：Vitest 覆盖主要业务逻辑和 UI 源码约束。
-
-## 当前功能
-
-环境：
-
-- 创建、编辑、复制、删除环境。
-- 每个环境有独立 `persist:profile-${profile.id}` session。
-- 每个环境有独立标签列表、active tab、收藏、历史记录。
-
-代理：
-
-- 支持 `http`、`https`、`socks5` URL 解析。
-- 内嵌 BrowserView 打开网页前会按 profile 配置 Electron session proxy。
-- 可检查代理连通性。
-
-内嵌浏览器：
-
-- 使用 Electron 原生 `BrowserView`，不是 `<webview>`。
-- 主进程通过 `NativeBrowserViewController` 按 tab 维护 BrowserView 实例，切换 tab 时隐藏/显示对应 view，避免重复 reload。
-- 网页弹出的 `target="_blank"` / `window.open` 会被拦截为当前环境下的新内部标签。
-- 网页内普通跳转会按触发事件的 view 回写对应 tab 的 URL 和 title。
-- 前端通过 `profiles:changed` 事件刷新左侧标签和地址栏。
-
-UI：
-
-- 左侧：环境列表、每个环境下的标签。
-- 中间：浏览器工具栏和网页区域。
-- 右侧 inspector 可折叠。
-- 地址栏按 Enter 打开，不再需要额外“打开”按钮。
-- 打开新建/编辑/路径设置弹窗时会隐藏 BrowserView，避免原生网页层盖住 React 弹窗。
-
-## 重要设计取舍
-
-### BrowserView 层级
-
-`BrowserView` 是原生层，不在 React DOM 树里。它会盖住 React modal。当前解决方式：
-
-- `src/App.tsx` 有 `isModalOpen = isEditorOpen || isSettingsOpen`。
-- 弹窗打开时调用 `window.api.hideNativeBrowserView()`。
-- 主进程 `native-browser:hide` 只 `removeBrowserView`，不关闭 `webContents`。
-- 弹窗关闭后 `showNativeBrowserView` 会把当前 tab 对应的 BrowserView 重新贴回窗口，减少网页状态丢失。
-
-### 网页缩放
-
-用户不想页面加载后跳来跳去，所以目前不再动态测宽缩放。
-
-当前固定值在 `src/nativeBrowserView.ts`：
-
-```ts
-export const FIXED_BROWSER_ZOOM = 1;
-```
-
-主进程 `resetNativeBrowserZoom()` 在 `dom-ready`、`did-finish-load`、`did-stop-loading` 和 resize 时设置固定缩放。
-
-如果后续觉得网页太小或太大，优先改这个常量。不要恢复“按完整页面高度缩放”，那会让网页像缩略图，不符合用户现在要的正常浏览器体验。
-
-### 标签页模型
-
-标签页已有独立 BrowserView runtime。当前仍使用 Electron `BrowserView`，但控制器会为不同 tab 缓存不同 view，切换 tab 不再强制把同一个页面 reload 到另一个 URL。
-
-相关函数：
-
-- `openTabInProfile`：在 active tab 打开 URL。
-- `createBlankTab`：创建新 tab。
-- `openUrlInNewTab`：网页弹窗转内部新 tab。
-- `activateTabInProfile`：切换 active tab。
-- `updateTabMetadataInProfile`：网页导航和 title 更新回触发事件的 tab，不改变当前 active tab。
-
-后续仍建议迁移到 `WebContentsView`，但当前 BrowserView 控制器已经是后续 adapter 的边界。
-
-## 当前已知问题和取舍
-
-- 后退/前进/刷新已接到当前 tab 的 BrowserView webContents，按钮状态由主进程导航 runtime 控制。
-- 地址栏有编辑中状态，用户输入时不会被 profile refresh 覆盖。
-- 多 tab 已有独立 BrowserView 缓存，但仍未迁移到 Electron 推荐的 `WebContentsView`。
-- 当前弹窗仍需要 hide/show 原生 BrowserView，WebContentsView 迁移后再处理层级。
-- 当前指纹伪装主要是 JS/content layer，距离商业级深度伪装还有差距。
-- 打包目录 `release/` 和构建目录 `dist/`、`dist-electron/` 已存在，开发时注意不要误以为它们是源代码。
-
-## 后续建议
-
-### 总体路线
-
-接下来目标不是继续堆 UI，而是把现在能用的 BrowserView 浏览能力收拢成真正浏览器内核：
-
-1. 先把“tab runtime + navigation state”补完整，让主进程知道每个 tab 的加载、前进、后退、崩溃、错误状态。
-2. 再加 `WebContentsView` adapter，替换 deprecated `BrowserView`。
-3. 然后补浏览器必备能力：下载、权限、证书/外部协议、崩溃恢复。
-4. 最后把硬件指纹 v2 模型接入 runtime、自测和 UI，减少伪装值漂移。
-
-### 下一阶段 1：导航状态和 tab runtime
-
-状态：已开始实现。`NativeBrowserViewController` 已保存每个 tab 的 `BrowserNavigationState`，主进程已监听加载、导航、失败、崩溃事件，前端后退/前进按钮已改为读取 `canGoBack/canGoForward`。
-
-目标：前端不再用 `selected?.lastOpenedUrl` 粗略判断按钮状态，而是由主进程返回当前 tab 的真实状态。
-
-要改的文件：
-
-- `src/types.ts`：新增 `BrowserTabRuntime`、`BrowserNavigationState`，扩展 `AppApi`。
-- `electron/services/nativeBrowserViewController.ts`：保存每个 tab 的 runtime 状态。
-- `electron/main.ts`：监听 webContents 事件并通过 IPC 或 `profiles:changed` 更新 UI。
-- `src/App.tsx`：后退/前进/刷新按钮改为读 runtime 状态。
-- `tests/nativeBrowserViewController.test.ts`：补导航状态事件测试。
-- `tests/browserChromeUi.test.ts`：补按钮 disabled 来源测试。
-
-建议数据结构：
-
-```ts
-export interface BrowserNavigationState {
-  tabId: string;
-  profileId: string;
-  url: string;
-  title: string;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  isLoading: boolean;
-  crashed: boolean;
-  lastError?: string;
-}
-```
-
-事件来源：
-
-- `did-start-loading`：`isLoading = true`
-- `did-stop-loading`：`isLoading = false`
-- `did-navigate` / `did-navigate-in-page`：更新 URL、history 状态
-- `page-title-updated`：更新 title
-- `did-fail-load`：写入 `lastError`
-- `render-process-gone`：`crashed = true`
-
-验收标准：
-
-- 后退按钮只在当前 tab `canGoBack` 为 true 时可点。
-- 前进按钮只在当前 tab `canGoForward` 为 true 时可点。
-- reload 只刷新当前 tab 的 webContents。
-- 隐藏 tab 的导航事件只更新它自己的 metadata，不切换 active tab。
-
-### 下一阶段 2：WebContentsView adapter
-
-状态：adapter 边界已落地。新增 `browserPageView.ts`、`browserViewPageView.ts`、`webContentsViewPageView.ts`，控制器已依赖统一 `BrowserPageView` 接口；默认仍使用 BrowserView。
-
-目标：为 Electron 新版视图层做迁移，减少 BrowserView 层级问题。
-
-要改的文件：
-
-- 新增 `electron/services/browserPageView.ts`：定义统一 view adapter 接口。
-- 新增 `electron/services/browserViewPageView.ts`：把当前 BrowserView 包起来。
-- 新增 `electron/services/webContentsViewPageView.ts`：实现 WebContentsView 版本。
-- 修改 `electron/services/nativeBrowserViewController.ts`：依赖接口，不直接假设 BrowserView。
-- 修改 `electron/main.ts`：选择 adapter，先默认 BrowserView，WebContentsView 走实验开关。
-- 新增 `tests/browserPageViewAdapter.test.ts`：同一组契约跑两个 adapter 的 fake 实现。
-
-接口建议：
-
-```ts
-export interface BrowserPageView {
-  readonly webContents: Electron.WebContents;
-  setBounds(bounds: BrowserViewBounds): void;
-  setAutoResize(options: { width: boolean; height: boolean }): void;
-  destroy(): void;
-}
-
-export interface BrowserPageHost {
-  addPageView(view: BrowserPageView): void;
-  removePageView(view: BrowserPageView): void;
-}
-```
-
-验收标准：
-
-- 当前 BrowserView 行为不退化。
-- WebContentsView adapter 可以通过单元测试创建、显示、隐藏、销毁。
-- React modal 不再需要长期依赖 hide/show workaround 后，再考虑切默认。
-
-### 下一阶段 3：下载管理
-
-状态：核心已落地。新增 `DownloadController`、下载 IPC、profile-scoped 下载列表和 inspector 下载面板；下载可取消。
-
-目标：下载不再静默落到系统默认行为，而是 profile-scoped、可见、可取消。
-
-要改的文件：
-
-- 新增 `electron/services/downloadController.ts`
-- 修改 `src/types.ts`：新增 `DownloadRecord`
-- 修改 `electron/main.ts`：监听 `session.on('will-download')`
-- 修改 `electron/preload.ts`：暴露下载列表、取消、打开文件 API
-- 修改 `src/App.tsx`：增加下载区域或 inspector 下载面板
-- 新增 `tests/downloadController.test.ts`
-
-数据结构建议：
-
-```ts
-export interface DownloadRecord {
-  id: string;
-  profileId: string;
-  tabId?: string;
-  url: string;
-  filename: string;
-  savePath: string;
-  status: 'progressing' | 'completed' | 'cancelled' | 'interrupted';
-  receivedBytes: number;
-  totalBytes?: number;
-  error?: string;
-}
-```
-
-验收标准：
-
-- 每个下载记录能关联 profile。
-- 下载进度可更新。
-- 用户可以取消下载。
-- 不自动执行下载文件。
-
-### 下一阶段 4：权限、外部协议和证书策略
-
-状态：权限默认拒绝策略已落地。新增 `permissionController` 并接入 `embeddedSession`。外部协议策略已接入 native browser 层，`mailto:`、`tel:` 等协议会被阻止并写入导航错误。证书错误默认阻止，并覆盖主窗口与 native BrowserView。
-
-目标：把敏感能力默认收紧，避免网页突破 profile 边界。
-
-要改的文件：
-
-- 新增 `electron/services/permissionController.ts`
-- 修改 `electron/services/embeddedSession.ts`
-- 修改 `electron/main.ts`
-- 修改 `src/types.ts`
-- 新增 `tests/permissionController.test.ts`
-
-初始策略：
-
-- notification：默认 deny，后续可 profile 配置。
-- geolocation：默认 deny。
-- camera/microphone：默认 deny。
-- MIDI/HID/serial/Bluetooth：默认 deny。
-- clipboard：只保留浏览器默认 user gesture 行为。
-- `mailto:`、`tel:`、自定义协议：先阻止，并写入 launchTrace。
-- 证书错误：默认阻止，不自动忽略。
-
-验收标准：
-
-- 测试能证明敏感权限默认被拒绝。
-- 外部协议不会绕过当前 profile 跑到系统应用。
-- 证书错误不会静默继续。
-
-### 下一阶段 5：崩溃恢复和启动 reconcile
-
-状态：部分落地。启动时 persisted running profile 已 reconcile 为 warning；tab crash runtime 会写回 tab 记录，活动 tab 崩溃时前端显示可重新载入的崩溃状态。
-
-目标：页面崩溃、应用重启后状态可解释，不让用户误以为环境仍正常。
-
-要改的文件：
-
-- `electron/services/nativeBrowserViewController.ts`
-- `electron/services/profileStore.ts`
-- `electron/main.ts`
-- `src/types.ts`
-- `src/App.tsx`
-- `tests/nativeBrowserViewController.test.ts`
-- 新增 `tests/profileRecovery.test.ts`
-
-要做的事：
-
-- 监听 `render-process-gone`，给 tab 标记 `crashed = true`。
-- reload 崩溃 tab 时清掉 crashed 状态。
-- app 启动时清理 stale running profile 状态。
-- profile status 和 tab crash state 分开，不要把整个 profile 直接标死。
-
-验收标准：
-
-- tab 崩溃后 UI 有明确状态。
-- 点击 reload 只重载崩溃 tab。
-- 重启 app 后不会保留假的 running/pid。
-
-### 下一阶段 6：硬件指纹 v2 runtime 接入
-
-状态：已开始深接入。新增 `fingerprintRuntime` 作为运行时出口，flat `FingerprintConfig` 会先归一化成 `HardwareFingerprintProfile`，再导出 legacy config、UA metadata、Accept-Language 和 CDP 命令。Embedded CDP 已改为走这个 runtime 出口。
-
-目标：把 `docs/architecture/hardware-fingerprint-spec.md` 里的硬件模型真正接到运行时，而不是只停留在文档。
-
-已有基础：
-
-- `electron/services/fingerprint/model.ts`
-- `electron/services/fingerprint/modules.ts`
-- `electron/services/fingerprint/scriptBuilder.ts`
-- `electron/services/fingerprint/*`
-- `docs/architecture/hardware-fingerprint-spec.md`
-
-下一步要做：
-
-- 增加 `HardwareFingerprintProfile` 内部模型，保留旧 `FingerprintConfig` 兼容出口。
-- 用 device class 约束 OS、UA、UA-CH、platform、WebGL、CPU、memory、screen。
-- 让 CDP、session header、preload script、自测页面都从同一 derived values 读取。
-- 指纹变化时，调用 `disposeNativeBrowserProfileViews(profileId)` 清理该 profile 的所有 live view。
-- UI 编辑器先保留旧字段，但保存时走兼容转换。
-
-验收标准：
-
-- 同一个 seed 生成稳定。
-- Windows/Mac/Linux 字段内部一致。
-- UA Client Hints 和 UA 字符串一致。
-- WebGL renderer 与 platform/device class 不冲突。
-- 自测页面能显示 v2 derived values。
-
-### 下一阶段 7：前端体验收口
-
-目标：让用户感觉这是浏览器，不是测试面板。
-
-要改的文件：
-
-- `src/App.tsx`
-- `src/styles.css`
-- `src/types.ts`
-- `tests/browserChromeUi.test.ts`
-
-建议顺序：
-
-1. 工具栏按钮用 runtime state 控制 disabled。
-2. 增加 loading 状态，页面加载中显示轻量指示。
-3. 增加 crash/error 状态视图。
-4. inspector 展示当前 tab URL、title、loading、history、proxy、fingerprint health。
-5. 下载面板放在 inspector 或底部抽屉，不要做营销式 landing 页面。
-
-验收标准：
-
-- 主要按钮状态和当前 tab 一致。
-- 加载、失败、崩溃都有可见状态。
-- 弹窗不被网页盖住。
-- 页面文字不溢出按钮和 panel。
-
-### 做事顺序建议
-
-优先级高：
-
-1. 增加 WebContentsView adapter，逐步替换 deprecated BrowserView。
-2. 增加下载、权限、证书错误、崩溃恢复等浏览器级能力。
-3. 让前端根据主进程导航状态控制后退/前进按钮 disabled 状态。
-4. 增加用户环境详情页，代理、指纹、书签、历史更直观。
-
-优先级中：
-
-1. 固定缩放做成 UI 设置，例如 80%、90%、100%。
-2. 新标签默认打开空白页或首页，不一定沿用地址栏当前 URL。
-3. 书签展示独立区域更清楚。
-4. 代理失败时在 UI 明确标红，而不是只在 inspector。
-
-优先级低：
-
-1. 整理旧 `<webview>` fit 相关代码。当前 `webview:fit-page` 和 `src/webviewFit.ts` 还保留着，主要是历史遗留和测试覆盖。
-2. 清理构建产物，建立 git 仓库并加 `.gitignore`。
-3. 增加 e2e 自动化测试，目前主要是单元测试和源码约束测试。
-
-## 开发规则
-
-- 每个阶段先写测试，再改实现。
-- 每个可独立验收的阶段单独提交。
-- 不要把指纹模型重写、WebContentsView 迁移、下载权限一次性混在一个提交里。
-- 不要回退 `NativeBrowserViewController`，它是后续浏览器内核边界。
-- 不要恢复动态整页缩放；网页应像正常浏览器，必要时只做宽度适配或用户可选 zoom。
-- 不要直接在持久化 profile 里保存 Electron 对象，只保存 id、状态、URL、title、错误信息。
-- 当前构建产物 `dist/`、`dist-electron/`、`release/` 已存在，改源码时不要把它们当主逻辑。
-
-## 建议提交拆分
-
-1. `Add navigation runtime state`
-2. `Add browser page view adapter boundary`
-3. `Add experimental WebContentsView adapter`
-4. `Add profile scoped download controller`
-5. `Add permission and external protocol policy`
-6. `Add tab crash recovery state`
-7. `Wire hardware fingerprint v2 runtime`
-8. `Surface browser health in inspector`
-
-## 常用验证
-
-完整验证：
+提交或宣布完成前必须重新跑：
 
 ```bash
 npm run typecheck
@@ -451,25 +54,285 @@ npm run test
 npm run build
 ```
 
-启动开发：
+## 已完成版本
 
-```bash
-npm run dev
+### v1.0.7
+
+完成浏览器视图 adapter 边界、下载管理和权限默认拒绝策略。
+
+- 新增 `electron/services/browserPageView.ts`
+- 新增 `electron/services/browserViewPageView.ts`
+- 新增 `electron/services/webContentsViewPageView.ts`
+- `NativeBrowserViewController` 改为依赖统一 `BrowserPageView` 接口
+- 新增 `electron/services/downloadController.ts`
+- 下载记录按 profile 归属，可在 inspector 查看和取消
+- 新增 `electron/services/permissionController.ts`
+- `embeddedSession` 接入 deny-by-default 权限处理
+
+### v1.0.8
+
+完成 tab runtime、崩溃展示和外部协议拦截。
+
+- `BrowserTab` 增加 `canGoBack`、`canGoForward`、`isLoading`、`crashed`、`lastError`
+- 主进程导航事件会写回 tab runtime 状态
+- 活动 tab 崩溃时，前端显示“标签页已崩溃”和“重新载入”
+- 新增 `electron/services/navigationPolicy.ts`
+- native browser 层阻止 `mailto:`、`tel:` 等外部协议，并写入导航错误
+
+### v1.0.9
+
+完成证书默认阻止和硬件指纹 runtime 接入第一段。
+
+- 证书错误在主窗口和 native BrowserView 中都默认阻止
+- 新增 `electron/services/fingerprintRuntime.ts`
+- flat `FingerprintConfig` 会归一化为 `HardwareFingerprintProfile`
+- runtime 统一导出 legacy config、UA metadata、Accept-Language、CDP setup commands
+- `embeddedFingerprint.buildEmbeddedCdpSetupCommands()` 已改为走 runtime CDP 命令
+- `buildAcceptLanguage` 从 `fingerprint/model.ts` 导出，避免重复逻辑
+
+## 核心目录
+
+- `src/App.tsx`：主 UI，环境列表、标签栏、地址栏、inspector、自测报告、下载面板、崩溃态。
+- `src/styles.css`：终端像素风样式和布局。
+- `src/types.ts`：renderer 可见的数据结构与 preload API 类型。
+- `src/browserWorkspace.ts`：profile/tab/bookmark/history 的纯函数状态更新。
+- `src/embeddedBrowser.ts`：内嵌浏览器前端 helper。
+- `src/nativeBrowserView.ts`：BrowserView 坐标与缩放常量。
+- `src/fingerprintEditor.ts`：指纹编辑表单和 legacy config 映射。
+- `src/deviceProfile.ts`：inspector 设备信息展示行。
+- `src/selfTestReport.ts`：自测结果转换为 UI checklist。
+- `electron/main.ts`：主进程、IPC、BrowserView 装配、session/proxy/权限/证书/导航策略接入。
+- `electron/preload.ts`：安全 IPC API 暴露。
+- `electron/services/nativeBrowserViewController.ts`：按 profile/tab 管理原生页面 view 生命周期。
+- `electron/services/profileStore.ts`：profile JSON 持久化。
+- `electron/services/embeddedSession.ts`：profile session header/proxy/权限配置。
+- `electron/services/embeddedFingerprint.ts`：BrowserView preload、CDP 注入和指纹 runtime 接入。
+- `electron/services/fingerprint/model.ts`：硬件指纹 v2 数据模型、生成、归一化、校验、legacy 兼容导出。
+- `electron/services/fingerprintRuntime.ts`：运行时唯一出口，负责把旧 config 转为可注入的统一 runtime profile。
+- `electron/services/selfTestPage.ts`：本地指纹自测页面生成。
+- `electron/services/selfTestResult.ts`：native 自测结果提取和摘要。
+- `docs/architecture/hardware-fingerprint-spec.md`：硬件指纹规范。
+- `docs/architecture/usable-browser-roadmap.md`：可用浏览器路线。
+
+## 当前功能
+
+环境：
+
+- 创建、编辑、复制、删除环境。
+- 每个环境使用独立 `persist:profile-${profile.id}` session。
+- 每个环境有独立标签、active tab、收藏、历史、下载记录。
+- 启动时会把陈旧 running profile reconcile 为 warning。
+
+代理：
+
+- 支持 `http`、`https`、`socks5` 代理 URL。
+- 支持代理认证，密码不会明文保存在 profile 数据里。
+- 内嵌 BrowserView 打开网页前会按 profile 配置 Electron session proxy。
+- 可检查代理连通性。
+
+浏览器内核：
+
+- 当前默认仍是 `BrowserView`，但已经通过 `BrowserPageView` adapter 隔离。
+- 按 tab 缓存 view，切换 tab 不会把同一个 view 反复 reload。
+- `target="_blank"` / `window.open` 会转为当前 profile 的内部新标签。
+- 网页内导航会回写触发 view 对应 tab 的 URL/title/runtime。
+- 后退、前进、刷新走 native webContents 命令。
+- 外部协议默认阻止，证书错误默认阻止。
+- 页面崩溃会写入 tab runtime，并在 UI 显示可 reload 的崩溃态。
+
+下载：
+
+- `DownloadController` 跟踪 profile-scoped 下载。
+- inspector 展示下载列表。
+- 用户可以取消下载。
+- 当前还未做“打开文件/显示到文件夹”的完整系统集成验收。
+
+权限：
+
+- notification、geolocation、camera、microphone、MIDI/HID/serial/Bluetooth 等敏感权限默认拒绝。
+- clipboard 保持更接近浏览器默认 user gesture 行为。
+
+指纹：
+
+- 已有硬件指纹 v2 模型，约束 OS、UA、UA-CH、platform、WebGL、CPU、memory、screen。
+- 旧 `FingerprintConfig` 仍保留，用于 UI 编辑器和兼容旧数据。
+- runtime 现在是统一出口，但自测页和 inspector 还未完整展示这个 runtime profile。
+
+## 重要设计取舍
+
+### BrowserView 原生层
+
+`BrowserView` 不在 React DOM 树里，会盖住 React 弹窗。当前解决方式：
+
+- `src/App.tsx` 通过 `isModalOpen` 判断弹窗打开状态。
+- 弹窗打开时调用 `hideNativeBrowserView()`。
+- 主进程 `native-browser:hide` 只移除 view，不关闭 webContents。
+- 弹窗关闭后再显示当前 active tab 对应 view。
+
+WebContentsView adapter 已经有基础，后续切默认后可重新评估层级问题。
+
+### 网页缩放
+
+用户明确不想页面加载后跳动，也不想整页缩成一屏。当前固定：
+
+```ts
+export const FIXED_BROWSER_ZOOM = 1;
 ```
 
-如果 Vite 已经在 `http://127.0.0.1:5173/` 跑着，只重启 Electron：
+不要恢复旧的“按完整页面高度缩放”。如需调整，优先做用户可选 zoom 或简单宽度适配。
+
+### 指纹模型
+
+不要在各处重复推导 UA-CH、Accept-Language、WebGL 等字段。后续新增运行时能力应优先走：
+
+- `normalizeFingerprintConfig`
+- `buildFingerprintRuntimeProfile`
+- `buildFingerprintRuntimeCdpCommands`
+- `validateHardwareFingerprintProfile`
+
+目标是所有注入、自测、UI 都读同一份 derived values。
+
+## 现在最应该做的事
+
+### 1. 自测页接入硬件指纹 runtime derived values
+
+原因：v2 模型已经接到 CDP，但自测页仍有一部分派生逻辑在 HTML 内部重复推导。接下来要让自测报告直接呈现 runtime 结果，方便判断“写入的指纹”和“浏览器观测到的指纹”是否一致。
+
+建议改动：
+
+- `electron/services/selfTestPage.ts`
+  - 导入 `buildFingerprintRuntimeProfile`
+  - 用当前 profile 的 fingerprint 生成 `fingerprintRuntime`
+  - 把 `hardwareFingerprintProfile`、`schemaVersion`、`deviceClass`、`architecture`、`browserVersion`、`acceptLanguage`、`userAgentMetadata` 写入 expected/report
+  - 删除页面内重复的 `deriveExpectedUaHints`
+  - 把 `validateHardwareFingerprintProfile` 结果写入 report
+- `electron/services/selfTestResult.ts`
+  - summary 里增加 runtime profile validation 统计
+- `tests/selfTestPage.test.ts`
+  - 先写失败测试，断言 HTML/report 包含 `hardwareRuntime`、`schemaVersion`、`deviceClass`、`userAgentMetadata`
+  - 断言不再包含 `deriveExpectedUaHints`
+- `tests/selfTestReport.test.ts`
+  - 增加 runtime validation 计数测试
+
+验收标准：
+
+- 自测 report 有 `hardwareRuntime`
+- report 可读出 v2 schema、device class、architecture、UA metadata
+- UA metadata 不再由自测 HTML 临时复制推导
+
+### 2. inspector 展示硬件 runtime 摘要
+
+原因：用户需要看到硬件指纹是否规范，而不是只看到 legacy 字段。
+
+建议改动：
+
+- `src/App.tsx`
+  - 在 inspector 里从 `profile.selfTestReport?.hardwareRuntime` 读取 runtime 摘要
+  - 展示 schema、device class、architecture、UA metadata platform/arch、validation 状态
+  - 保持 compact，不做大段说明文字
+- `tests/browserChromeUi.test.ts`
+  - 增加源码约束测试，确保 inspector 有 runtime/schema/UA metadata 展示入口
+
+验收标准：
+
+- 没跑自测时仍显示 legacy device rows
+- 跑完自测后能看到 v2 runtime 摘要
+- 面板仍可折叠，低处报告不被挤没
+
+### 3. WebContentsView 实机开关
+
+原因：adapter 已有，但默认仍是 BrowserView。Electron 新版本推荐 WebContentsView，真正可用浏览器需要逐步切过去。
+
+建议改动：
+
+- `electron/main.ts`
+  - 增加实验开关，例如环境变量或 app setting：`USE_WEB_CONTENTS_VIEW=1`
+  - 创建 controller 时根据开关选择 `createWebContentsViewPageView` 或 `createBrowserViewPageView`
+- `tests/browserPageViewAdapter.test.ts`
+  - 已有基础契约，可补选择逻辑测试
+- 手工验收
+  - 打开 dev server，测试创建 tab、切 tab、弹窗、下载、自测页、崩溃态
+
+验收标准：
+
+- 默认 BrowserView 不退化
+- 开启 WebContentsView 后主路径能打开网页
+- modal 层级问题至少不比 BrowserView 更差
+
+### 4. 浏览器级端到端冒烟
+
+原因：目前测试以单元和源码约束为主，缺少真实 Electron 行为冒烟。
+
+建议脚本：
+
+- 启动 Vite dev server
+- 启动 Electron
+- 创建 profile
+- 打开本地自测页
+- 打开普通 http 页面
+- 点击 target blank 链接，确认进入内部 tab
+- 触发下载，确认下载记录出现
+
+可选位置：
+
+- `scripts/smoke-electron.mjs`
+- 或扩展现有 `smoke` 相关测试/脚本
+
+## 中期路线
+
+1. 完成自测页和 inspector 的硬件 runtime 展示。
+2. WebContentsView 增加实机开关并完成手工冒烟。
+3. 下载增加打开文件/显示文件夹/失败原因展示。
+4. profile 设置中增加浏览器 zoom 选项，不恢复动态整页缩放。
+5. 代理失败和证书失败在 UI 中做更明确的错误入口。
+6. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
+7. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
+
+## 开发规则
+
+- 每个阶段先写测试，再改实现。
+- 每个可独立验收的阶段单独提交。
+- 不要把指纹模型、自测 UI、WebContentsView 迁移、下载体验一次性混在一个大提交里。
+- 不要回退 `NativeBrowserViewController`，它是后续浏览器内核边界。
+- 不要把 Electron 对象放进持久化 profile，只保存 id、状态、URL、title、错误信息。
+- 不要恢复动态整页缩放。
+- 改前端后要检查文字不溢出、不遮挡，inspector 保持可折叠。
+- 构建产物 `dist/`、`dist-electron/`、`release/` 已存在，开发时不要把它们当源代码。
+
+## 建议提交拆分
+
+后续从这里继续时，推荐按下面顺序提交：
+
+1. `Surface hardware fingerprint runtime in self test`
+2. `Show hardware runtime summary in inspector`
+3. `Add WebContentsView runtime switch`
+4. `Add Electron browser smoke test`
+5. `Improve download file actions`
+
+## 快速接手命令
 
 ```bash
-pkill -f '/Users/suweichao/项目/指纹浏览器/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron' || true
-VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/suweichao/项目/指纹浏览器
+git status --short
+git log --oneline -5
+npm run typecheck
+npm run test
+npm run build
 ```
 
-## 最近用户明确要求
+如果只做当前下一步的硬件 runtime 展示，先跑定向测试：
 
-- 页面语言用中文沟通。
-- UI 保持终端像素风。
-- 网页要像正常浏览器一样，不要整页缩成一屏。
-- 点击网页链接新窗口必须进入内部标签页，不要弹独立窗口。
+```bash
+npm run test -- tests/selfTestPage.test.ts tests/selfTestReport.test.ts tests/browserChromeUi.test.ts tests/fingerprintRuntime.test.ts
+```
+
+## 用户明确要求
+
+- 用中文沟通。
+- 可以改前端，但要完整做好。
+- 指纹伪装要参考同类开源项目思路，重点是硬件指纹规范化。
+- 目标是做成真正能用的浏览器，不只是测试壳。
+- 网页要像正常浏览器，不要整页缩成一屏。
+- 点击网页新窗口必须进入内部标签页，不要弹独立窗口。
 - 标签切换时地址栏要跟着变。
-- 新建环境弹窗不能被网页挡住。
-- 网页不要加载后动态缩放跳动，当前用固定 1 倍缩放。
+- 新建/编辑弹窗不能被网页挡住。
+- 网页不要加载后动态缩放跳动，当前固定 1 倍缩放。
