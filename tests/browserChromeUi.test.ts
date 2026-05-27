@@ -246,6 +246,14 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('deviceRows.map');
   });
 
+  it('shows hardware fingerprint runtime details in the inspector', () => {
+    expect(appSource).toContain('hardwareRuntime');
+    expect(appSource).toContain('hardwareRuntimeSummary');
+    expect(appSource).toContain('schemaVersion');
+    expect(appSource).toContain('deviceClass');
+    expect(appSource).toContain('userAgentMetadata');
+  });
+
   it('shows profile scoped downloads in the inspector', () => {
     expect(appSource).toContain('listDownloads');
     expect(appSource).toContain('cancelDownload');

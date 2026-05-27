@@ -30,13 +30,18 @@ describe('summarizeSelfTestReport', () => {
           fullVersionMatchesProfile: true,
         },
       },
+      hardwareRuntime: {
+        validation: {
+          valid: true,
+        },
+      },
       webrtc: {
         candidateCount: 0,
         webrtcLeakRisk: false,
       },
     });
 
-    expect(summary).toBe('14/14 checks ok');
+    expect(summary).toBe('15/15 checks ok');
   });
 
   it('counts missing proxy exit and webrtc leaks as failed checks', () => {
@@ -64,13 +69,18 @@ describe('summarizeSelfTestReport', () => {
           fullVersionMatchesProfile: false,
         },
       },
+      hardwareRuntime: {
+        validation: {
+          valid: false,
+        },
+      },
       webrtc: {
         candidateCount: 2,
         webrtcLeakRisk: true,
       },
     });
 
-    expect(summary).toBe('3/11 checks ok');
+    expect(summary).toBe('3/12 checks ok');
   });
 
   it('does not count direct network mode as a proxy failure', () => {

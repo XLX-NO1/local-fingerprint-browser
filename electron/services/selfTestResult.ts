@@ -37,6 +37,10 @@ export function summarizeSelfTestReport(report: Record<string, unknown> | undefi
       }
     }
   }
+  const hardwareRuntime = report?.hardwareRuntime as { validation?: { valid?: boolean } } | undefined;
+  if (hardwareRuntime?.validation) {
+    checks.push(Boolean(hardwareRuntime.validation.valid));
+  }
   if (webrtc) {
     checks.push(!(webrtc.webrtcLeakRisk ?? webrtc.leakRisk));
   }

@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import type { BrowserProfile } from '../../src/types';
 import { buildLocaleConsistencyReport } from '../../src/fingerprintLocaleConsistency';
 import { DEFAULT_CHROMIUM_VERSION } from '../../src/chromiumVersion';
+import { buildFingerprintRuntimeProfile } from './fingerprintRuntime';
+import { validateHardwareFingerprintProfile } from './fingerprint/model';
 
 export interface SelfTestPage {
   filePath: string;
@@ -23,10 +25,28 @@ export async function prepareSelfTestPage(profile: BrowserProfile): Promise<Self
 }
 
 function buildSelfTestHtml(profile: BrowserProfile): string {
+  const fingerprintRuntime = buildFingerprintRuntimeProfile({ id: profile.id, fingerprint: profile.fingerprint });
+  const hardwareFingerprintProfile = fingerprintRuntime.profile;
+  const hardwareRuntime = {
+    schemaVersion: hardwareFingerprintProfile.schemaVersion,
+    deviceClass: hardwareFingerprintProfile.device.deviceClass,
+    os: hardwareFingerprintProfile.device.os,
+    architecture: hardwareFingerprintProfile.hardware.architecture,
+    browserVersion: hardwareFingerprintProfile.browser.version,
+    acceptLanguage: fingerprintRuntime.acceptLanguage,
+    userAgentMetadata: fingerprintRuntime.userAgentMetadata,
+    validation: validateHardwareFingerprintProfile(hardwareFingerprintProfile),
+  };
   const expected = JSON.stringify(
     {
       profileId: profile.id,
       profileName: profile.name,
+      schemaVersion: hardwareRuntime.schemaVersion,
+      deviceClass: hardwareRuntime.deviceClass,
+      architecture: hardwareRuntime.architecture,
+      browserVersion: hardwareRuntime.browserVersion,
+      acceptLanguage: hardwareRuntime.acceptLanguage,
+      userAgentMetadata: hardwareRuntime.userAgentMetadata,
       userAgent: profile.fingerprint.userAgent,
       platform: profile.fingerprint.platform,
       languages: profile.fingerprint.languages,
@@ -84,6 +104,8 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
     window.__LOCAL_FINGERPRINT_SELF_TEST__ = true;
     const expected = ${expected};
     const profileFingerprint = ${JSON.stringify(profile.fingerprint)};
+    const hardwareFingerprintProfile = ${JSON.stringify(hardwareFingerprintProfile)};
+    const hardwareRuntime = ${JSON.stringify(hardwareRuntime)};
     const expectedChromiumVersion = ${JSON.stringify(DEFAULT_CHROMIUM_VERSION)};
     const initialLocaleConsistency = ${JSON.stringify(buildLocaleConsistencyReport({
       fingerprint: profile.fingerprint,
@@ -144,26 +166,6 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
     };
 
     const errorToString = (error) => error instanceof Error ? error.message : String(error);
-
-    const deriveExpectedUaHints = (fingerprint) => {
-      const platform = fingerprint.os === 'macos' ? 'macOS' : fingerprint.os === 'windows' ? 'Windows' : 'Linux';
-      const architecture = fingerprint.platform === 'MacARM64' || /Apple M[1-5]/.test(fingerprint.webglRenderer) ? 'arm' : 'x86';
-      let platformVersion = '';
-      if (fingerprint.os === 'windows') {
-        platformVersion = fingerprint.userAgent.includes('Windows NT 11.0') ? '11.0.0' : '10.0.0';
-      } else if (fingerprint.os === 'macos') {
-        const macVersionMatch = fingerprint.userAgent.match(/Mac OS X ([^)]+)/);
-        platformVersion = macVersionMatch ? macVersionMatch[1].replace(/_/g, '.') : '';
-      } else if (fingerprint.os === 'linux') {
-        platformVersion = '6.5.0';
-      }
-      return {
-        architecture,
-        platform,
-        platformVersion,
-        uaFullVersion: fingerprint.browserVersion
-      };
-    };
 
     const countryFromTimezone = (timezone) => ({
       'America/New_York': 'US',
@@ -246,13 +248,14 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
       };
     };
 
-    const renderReport = ({ expected, observed, canvasHash, webgl, matched, network, webrtc, localeConsistency, runtimeConsistency, complete }) => {
+    const renderReport = ({ expected, observed, canvasHash, webgl, matched, network, webrtc, localeConsistency, runtimeConsistency, hardwareRuntime, complete }) => {
       const finalLocaleConsistency = localeConsistency || initialLocaleConsistency;
-      window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__ = { expected, observed, canvasHash, webgl, matched, network, webrtc, localeConsistency: finalLocaleConsistency, runtimeConsistency, complete };
+      window.__LOCAL_FINGERPRINT_SELF_TEST_RESULT__ = { expected, observed, canvasHash, webgl, matched, network, webrtc, localeConsistency: finalLocaleConsistency, runtimeConsistency, hardwareRuntime, complete };
       const checks = [
         ...Object.values(matched),
         !webrtc.leakRisk,
         runtimeConsistency ? runtimeConsistency.browserVersionMatchesRuntime : true,
+        hardwareRuntime ? Boolean(hardwareRuntime.validation?.valid) : true,
         ...(finalLocaleConsistency?.checks || []).map((check) => check.passed)
       ];
       if (network.proxyConfigured) {
@@ -362,7 +365,7 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
 
       const observedChromeVersion = navigator.userAgent.match(/Chrome\\/([^\\s]+)/)?.[1] || 'unknown';
       const observedUaClientVersion = uaClientHints?.uaFullVersion || uaClientHints?.fullVersionList?.[0]?.version || 'unknown';
-      const expectedUaHints = deriveExpectedUaHints(profileFingerprint);
+      const expectedUaHints = hardwareRuntime.userAgentMetadata;
       const uaClientHintsConsistency = {
         expected: expectedUaHints,
         observed: uaClientHints || {},
@@ -424,6 +427,10 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
         webrtc: { supported: false, candidateCount: 0, candidates: [], leakRisk: false, webrtcLeakRisk: false },
         localeConsistency: initialLocaleConsistency,
         runtimeConsistency,
+        hardwareRuntime: {
+          ...hardwareRuntime,
+          profile: hardwareFingerprintProfile
+        },
         complete: false
       };
       renderReport(baseReport);
@@ -444,6 +451,10 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
           proxyConfigured: ${profile.proxy ? 'true' : 'false'},
           ...networkResult
         }),
+        hardwareRuntime: {
+          ...hardwareRuntime,
+          profile: hardwareFingerprintProfile
+        },
         complete: true
       });
     };
@@ -482,13 +493,17 @@ function buildSelfTestHtml(profile: BrowserProfile): string {
           observedUaClientVersion: 'error',
           browserVersionMatchesRuntime: false,
           uaClientHintsConsistency: {
-            expected: deriveExpectedUaHints(profileFingerprint),
+            expected: hardwareRuntime.userAgentMetadata,
             observed: {},
             platformMatchesProfile: false,
             architectureMatchesProfile: false,
             platformVersionMatchesProfile: false,
             fullVersionMatchesProfile: false
           }
+        },
+        hardwareRuntime: {
+          ...hardwareRuntime,
+          profile: hardwareFingerprintProfile
         },
         complete: true
       });

@@ -9,16 +9,16 @@
 - 内嵌网页已走 Electron 原生 BrowserView 控制器，按 profile/tab 管理实例。
 - 多环境、代理、标签、收藏、历史、下载、权限策略、证书策略、外部协议拦截、崩溃状态已经有核心链路。
 - 硬件指纹 v2 模型已经落到 `electron/services/fingerprint/model.ts`，并通过 `fingerprintRuntime` 接入 CDP/Accept-Language/UA metadata。
-- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 还未切默认，自测页和 inspector 还没完整展示 runtime derived values，真实端到端冒烟仍需要补。
+- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 还未切默认，真实端到端冒烟仍需要补。
 
-当前推荐下一步：先把硬件指纹 runtime 的派生结果接进自测页和 inspector，然后补 WebContentsView 实机切换与浏览器级端到端冒烟。
+当前推荐下一步：补 WebContentsView 实机开关与浏览器级端到端冒烟。
 
 ## 基本信息
 
 - 工作目录：`/Users/suweichao/项目/指纹浏览器`
 - 当前分支：`codex/fingerprint-model-spec`
-- 当前版本：`package.json` 为 `1.0.9`
-- 最新提交：`4246a96 Release v1.0.9`
+- 当前版本：`package.json` 为 `1.0.10`
+- 最新提交：以 `git log --oneline -1` 为准
 - 语言：和用户沟通用中文
 - UI 方向：保持终端像素风，但交互要像正常浏览器
 
@@ -40,11 +40,11 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 
 ## 最近验证基线
 
-截至 `Release v1.0.9`：
+截至 `Release v1.0.10`：
 
-- `npm run test` 通过：37 个测试文件，173 个测试
+- `npm run test` 通过：37 个测试文件，174 个测试
 - `npm run build` 通过
-- `npm run typecheck` 在前序版本通过；后续提交前仍需要重新跑
+- `npm run typecheck` 通过
 
 提交或宣布完成前必须重新跑：
 
@@ -89,6 +89,16 @@ npm run build
 - runtime 统一导出 legacy config、UA metadata、Accept-Language、CDP setup commands
 - `embeddedFingerprint.buildEmbeddedCdpSetupCommands()` 已改为走 runtime CDP 命令
 - `buildAcceptLanguage` 从 `fingerprint/model.ts` 导出，避免重复逻辑
+
+### v1.0.10
+
+完成硬件指纹 runtime 在自测页和 inspector 的展示收口。
+
+- `selfTestPage` 通过 `buildFingerprintRuntimeProfile` 生成硬件 runtime
+- 自测 report 新增 `hardwareRuntime`，包含 schema、device class、architecture、UA metadata 和 validation
+- 删除自测 HTML 内重复的 UA hints 推导，改为读取 runtime derived values
+- `summarizeSelfTestReport` 会统计硬件 runtime validation
+- inspector 和自测页会展示硬件 runtime 摘要
 
 ## 核心目录
 
@@ -156,7 +166,7 @@ npm run build
 
 - 已有硬件指纹 v2 模型，约束 OS、UA、UA-CH、platform、WebGL、CPU、memory、screen。
 - 旧 `FingerprintConfig` 仍保留，用于 UI 编辑器和兼容旧数据。
-- runtime 现在是统一出口，但自测页和 inspector 还未完整展示这个 runtime profile。
+- runtime 现在是统一出口，自测页和 inspector 已能展示这个 runtime profile。
 
 ## 重要设计取舍
 
@@ -194,52 +204,7 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 ## 现在最应该做的事
 
-### 1. 自测页接入硬件指纹 runtime derived values
-
-原因：v2 模型已经接到 CDP，但自测页仍有一部分派生逻辑在 HTML 内部重复推导。接下来要让自测报告直接呈现 runtime 结果，方便判断“写入的指纹”和“浏览器观测到的指纹”是否一致。
-
-建议改动：
-
-- `electron/services/selfTestPage.ts`
-  - 导入 `buildFingerprintRuntimeProfile`
-  - 用当前 profile 的 fingerprint 生成 `fingerprintRuntime`
-  - 把 `hardwareFingerprintProfile`、`schemaVersion`、`deviceClass`、`architecture`、`browserVersion`、`acceptLanguage`、`userAgentMetadata` 写入 expected/report
-  - 删除页面内重复的 `deriveExpectedUaHints`
-  - 把 `validateHardwareFingerprintProfile` 结果写入 report
-- `electron/services/selfTestResult.ts`
-  - summary 里增加 runtime profile validation 统计
-- `tests/selfTestPage.test.ts`
-  - 先写失败测试，断言 HTML/report 包含 `hardwareRuntime`、`schemaVersion`、`deviceClass`、`userAgentMetadata`
-  - 断言不再包含 `deriveExpectedUaHints`
-- `tests/selfTestReport.test.ts`
-  - 增加 runtime validation 计数测试
-
-验收标准：
-
-- 自测 report 有 `hardwareRuntime`
-- report 可读出 v2 schema、device class、architecture、UA metadata
-- UA metadata 不再由自测 HTML 临时复制推导
-
-### 2. inspector 展示硬件 runtime 摘要
-
-原因：用户需要看到硬件指纹是否规范，而不是只看到 legacy 字段。
-
-建议改动：
-
-- `src/App.tsx`
-  - 在 inspector 里从 `profile.selfTestReport?.hardwareRuntime` 读取 runtime 摘要
-  - 展示 schema、device class、architecture、UA metadata platform/arch、validation 状态
-  - 保持 compact，不做大段说明文字
-- `tests/browserChromeUi.test.ts`
-  - 增加源码约束测试，确保 inspector 有 runtime/schema/UA metadata 展示入口
-
-验收标准：
-
-- 没跑自测时仍显示 legacy device rows
-- 跑完自测后能看到 v2 runtime 摘要
-- 面板仍可折叠，低处报告不被挤没
-
-### 3. WebContentsView 实机开关
+### 1. WebContentsView 实机开关
 
 原因：adapter 已有，但默认仍是 BrowserView。Electron 新版本推荐 WebContentsView，真正可用浏览器需要逐步切过去。
 
@@ -259,7 +224,7 @@ export const FIXED_BROWSER_ZOOM = 1;
 - 开启 WebContentsView 后主路径能打开网页
 - modal 层级问题至少不比 BrowserView 更差
 
-### 4. 浏览器级端到端冒烟
+### 2. 浏览器级端到端冒烟
 
 原因：目前测试以单元和源码约束为主，缺少真实 Electron 行为冒烟。
 
@@ -280,13 +245,12 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 ## 中期路线
 
-1. 完成自测页和 inspector 的硬件 runtime 展示。
-2. WebContentsView 增加实机开关并完成手工冒烟。
-3. 下载增加打开文件/显示文件夹/失败原因展示。
-4. profile 设置中增加浏览器 zoom 选项，不恢复动态整页缩放。
-5. 代理失败和证书失败在 UI 中做更明确的错误入口。
-6. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
-7. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
+1. WebContentsView 增加实机开关并完成手工冒烟。
+2. 下载增加打开文件/显示文件夹/失败原因展示。
+3. profile 设置中增加浏览器 zoom 选项，不恢复动态整页缩放。
+4. 代理失败和证书失败在 UI 中做更明确的错误入口。
+5. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
+6. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
 
 ## 开发规则
 
@@ -303,11 +267,9 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 后续从这里继续时，推荐按下面顺序提交：
 
-1. `Surface hardware fingerprint runtime in self test`
-2. `Show hardware runtime summary in inspector`
-3. `Add WebContentsView runtime switch`
-4. `Add Electron browser smoke test`
-5. `Improve download file actions`
+1. `Add WebContentsView runtime switch`
+2. `Add Electron browser smoke test`
+3. `Improve download file actions`
 
 ## 快速接手命令
 

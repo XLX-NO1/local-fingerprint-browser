@@ -745,6 +745,25 @@ export default function App() {
   );
 }
 
+type HardwareRuntimeReport = {
+  schemaVersion?: number;
+  deviceClass?: string;
+  architecture?: string;
+  browserVersion?: string;
+  acceptLanguage?: string;
+  userAgentMetadata?: {
+    platform?: string;
+    architecture?: string;
+    platformVersion?: string;
+    uaFullVersion?: string;
+  };
+  validation?: {
+    valid?: boolean;
+    errors?: string[];
+    warnings?: string[];
+  };
+};
+
 function Inspector({
   profile,
   downloads,
@@ -763,6 +782,8 @@ function Inspector({
   const webrtc = profile.selfTestReport?.webrtc as { candidateCount?: number; webrtcLeakRisk?: boolean; leakRisk?: boolean } | undefined;
   const localeConsistency = profile.selfTestReport?.localeConsistency as { score?: number; status?: string; summary?: string } | undefined;
   const runtimeConsistency = profile.selfTestReport?.runtimeConsistency as { expectedChromiumVersion?: string; profileBrowserVersion?: string; browserVersionMatchesRuntime?: boolean } | undefined;
+  const hardwareRuntime = profile.selfTestReport?.hardwareRuntime as HardwareRuntimeReport | undefined;
+  const hardwareRuntimeSummary = summarizeHardwareRuntime(hardwareRuntime);
   const deviceRows = buildDeviceProfileRows(profile.fingerprint);
 
   return (
@@ -775,6 +796,7 @@ function Inspector({
         <Kv label="language" value={profile.fingerprint.languages.join(',')} />
         <Kv label="locale score" value={localeConsistency ? `${localeConsistency.score ?? 0}% · ${localeConsistency.status ?? 'unknown'}` : 'not tested'} />
         <Kv label="runtime" value={runtimeConsistency ? `${runtimeConsistency.browserVersionMatchesRuntime ? 'ok' : 'mismatch'} · ${runtimeConsistency.profileBrowserVersion ?? 'unknown'}` : 'not tested'} />
+        <Kv label="hardware runtime" value={hardwareRuntimeSummary} />
         <Kv label="webrtc" value={profile.fingerprint.webrtcPolicy} />
         <Kv label="automation" value={profile.lastError ? 'degraded' : profile.status === 'running' ? 'attached' : 'waiting'} />
         <Kv label="last url" value={profile.lastOpenedUrl ?? 'not opened'} />
@@ -797,6 +819,14 @@ function Inspector({
         </div>
       </Panel>
       <Panel panelId="device-profile" title="device profile" meta={profile.fingerprint.id} compact>
+        {hardwareRuntime ? (
+          <>
+            <Kv label="schema" value={`v${hardwareRuntime.schemaVersion ?? 'unknown'} · ${hardwareRuntime.validation?.valid ? 'valid' : 'check'}`} />
+            <Kv label="device class" value={hardwareRuntime.deviceClass ?? 'unknown'} />
+            <Kv label="architecture" value={hardwareRuntime.architecture ?? 'unknown'} />
+            <Kv label="UA metadata" value={formatUserAgentMetadata(hardwareRuntime.userAgentMetadata)} />
+          </>
+        ) : null}
         {deviceRows.map((row) => (
           <Kv label={row.label} value={row.value} key={row.label} />
         ))}
@@ -850,6 +880,7 @@ function SelfTestReportView({ profile }: { profile: BrowserProfile }) {
   const webrtc = report?.webrtc as Record<string, unknown> | undefined;
   const localeConsistency = report?.localeConsistency as Record<string, unknown> | undefined;
   const runtimeConsistency = report?.runtimeConsistency as Record<string, unknown> | undefined;
+  const hardwareRuntime = report?.hardwareRuntime as Record<string, unknown> | undefined;
 
   return (
     <div className="self-test-view">
@@ -866,6 +897,7 @@ function SelfTestReportView({ profile }: { profile: BrowserProfile }) {
         <SelfTestBox title="Expected Profile" value={expected ?? expectedFromProfile(profile)} />
         <SelfTestBox title="Observed Browser" value={observed ?? { status: 'waiting for hidden Chromium capture' }} />
         <SelfTestBox title="Network / Locale" value={{ network: network ?? 'pending', localeConsistency: localeConsistency ?? 'pending', runtimeConsistency: runtimeConsistency ?? 'pending' }} />
+        <SelfTestBox title="Hardware Runtime" value={hardwareRuntime ?? { status: 'pending' }} />
         <SelfTestBox title="Canvas" value={{ canvasHash: report?.canvasHash ?? 'pending' }} />
         <SelfTestBox title="WebGL / WebRTC" value={{ webgl: webgl ?? 'pending', webrtc: webrtc ?? 'pending' }} />
       </div>
@@ -1061,6 +1093,28 @@ function formatDownloadSize(bytes: number): string {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function summarizeHardwareRuntime(hardwareRuntime?: HardwareRuntimeReport): string {
+  if (!hardwareRuntime) {
+    return 'not tested';
+  }
+  const schemaVersion = hardwareRuntime.schemaVersion ? `v${hardwareRuntime.schemaVersion}` : 'v?';
+  const deviceClass = hardwareRuntime.deviceClass ?? 'unknown device';
+  const status = hardwareRuntime.validation?.valid ? 'valid' : 'check';
+  return `${schemaVersion} · ${deviceClass} · ${status}`;
+}
+
+function formatUserAgentMetadata(userAgentMetadata?: HardwareRuntimeReport['userAgentMetadata']): string {
+  if (!userAgentMetadata) {
+    return 'not tested';
+  }
+  return [
+    userAgentMetadata.platform,
+    userAgentMetadata.architecture,
+    userAgentMetadata.platformVersion,
+    userAgentMetadata.uaFullVersion,
+  ].filter(Boolean).join(' · ') || 'unknown';
 }
 
 function toMessage(error: unknown): string {
