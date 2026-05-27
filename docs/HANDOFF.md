@@ -50,7 +50,7 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 最近一次验证：
 
 - `npm run typecheck` 通过
-- `npm run test` 通过，32 个测试文件，154 个测试
+- `npm run test` 通过，35 个测试文件，164 个测试
 - `npm run build` 通过
 - Electron 已能打开本地软件窗口
 
@@ -209,6 +209,8 @@ export interface BrowserNavigationState {
 
 ### 下一阶段 2：WebContentsView adapter
 
+状态：adapter 边界已落地。新增 `browserPageView.ts`、`browserViewPageView.ts`、`webContentsViewPageView.ts`，控制器已依赖统一 `BrowserPageView` 接口；默认仍使用 BrowserView。
+
 目标：为 Electron 新版视图层做迁移，减少 BrowserView 层级问题。
 
 要改的文件：
@@ -243,6 +245,8 @@ export interface BrowserPageHost {
 - React modal 不再需要长期依赖 hide/show workaround 后，再考虑切默认。
 
 ### 下一阶段 3：下载管理
+
+状态：核心已落地。新增 `DownloadController`、下载 IPC、profile-scoped 下载列表和 inspector 下载面板；下载可取消。
 
 目标：下载不再静默落到系统默认行为，而是 profile-scoped、可见、可取消。
 
@@ -280,6 +284,8 @@ export interface DownloadRecord {
 - 不自动执行下载文件。
 
 ### 下一阶段 4：权限、外部协议和证书策略
+
+状态：权限默认拒绝策略已落地。新增 `permissionController` 并接入 `embeddedSession`。外部协议和证书错误策略仍需继续补。
 
 目标：把敏感能力默认收紧，避免网页突破 profile 边界。
 

@@ -91,6 +91,19 @@ export interface BrowserBookmark {
   createdAt: string;
 }
 
+export interface DownloadRecord {
+  id: string;
+  profileId: string;
+  tabId?: string;
+  url: string;
+  filename: string;
+  savePath: string;
+  status: 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+  receivedBytes: number;
+  totalBytes?: number;
+  error?: string;
+}
+
 export interface ProfileHistoryEvent {
   id: string;
   type: 'created' | 'updated' | 'duplicated' | 'launched' | 'stopped' | 'proxy-check' | 'error';
@@ -147,6 +160,8 @@ export interface AppApi {
   resizeNativeBrowserView(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
   hideNativeBrowserView(): Promise<void>;
   getNativeBrowserNavigationState(profileId: string, tabId: string): Promise<BrowserNavigationState | undefined>;
+  listDownloads(profileId?: string): Promise<DownloadRecord[]>;
+  cancelDownload(id: string): Promise<boolean>;
   goBackNativeBrowserView(): Promise<void>;
   goForwardNativeBrowserView(): Promise<void>;
   reloadNativeBrowserView(): Promise<void>;

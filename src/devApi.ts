@@ -1,4 +1,4 @@
-import type { AppApi, BrowserProfile, CreateProfileInput, LaunchResult, ProfileHistoryEvent, UpdateProfileInput } from './types';
+import type { AppApi, BrowserProfile, CreateProfileInput, DownloadRecord, LaunchResult, ProfileHistoryEvent, UpdateProfileInput } from './types';
 import { parseProxyInput } from './proxyInput';
 import { activateTabInProfile, closeTabInProfile, createBlankTab, openTabInProfile, toggleBookmarkInProfile } from './browserWorkspace';
 
@@ -9,6 +9,7 @@ export function installDevApi(): void {
 
   let profiles: BrowserProfile[] = [];
   let chromiumPath = '';
+  const downloads: DownloadRecord[] = [];
 
   const api: AppApi = {
     async listProfiles() {
@@ -182,6 +183,17 @@ export function installDevApi(): void {
     async hideNativeBrowserView() {},
     async getNativeBrowserNavigationState() {
       return undefined;
+    },
+    async listDownloads(profileId?: string) {
+      return profileId ? downloads.filter((download) => download.profileId === profileId) : downloads;
+    },
+    async cancelDownload(id: string) {
+      const download = downloads.find((item) => item.id === id);
+      if (!download) {
+        return false;
+      }
+      download.status = 'cancelled';
+      return true;
     },
     async goBackNativeBrowserView() {},
     async goForwardNativeBrowserView() {},

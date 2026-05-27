@@ -1,6 +1,7 @@
 import type { Session } from 'electron';
 import type { BrowserProfile } from '../../src/types';
 import { buildAcceptLanguageHeader } from './embeddedFingerprint';
+import { configureProfilePermissions } from './permissionController';
 import { proxyToChromiumUrl } from './proxy';
 
 type HeaderHandler = Parameters<Session['webRequest']['onBeforeSendHeaders']>[0];
@@ -18,9 +19,7 @@ export async function configureProfileSession(profileSession: Session, profile: 
     await profileSession.setProxy({ mode: 'direct' });
   }
 
-  profileSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
-  });
+  configureProfilePermissions(profileSession);
 
   const acceptLanguage = buildAcceptLanguageHeader(profile.fingerprint.languages);
   const previous = sessionState.get(profileSession);

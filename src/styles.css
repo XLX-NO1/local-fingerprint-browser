@@ -836,6 +836,46 @@ button.primary {
   line-height: 1.55;
 }
 
+.download-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 6px 0;
+}
+
+.download-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.download-row strong,
+.download-row span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-row strong {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.download-row span {
+  color: var(--muted);
+  font-size: 9px;
+  margin-top: 2px;
+}
+
+.download-row button {
+  min-width: 42px;
+  padding: 0 5px;
+  font-size: 10px;
+}
+
 .error-trace {
   color: var(--red);
   border-top: 1px solid var(--line);

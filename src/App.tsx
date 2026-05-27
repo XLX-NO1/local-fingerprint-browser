@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { BrowserNavigationState, BrowserProfile, CreateProfileInput } from './types';
+import type { BrowserNavigationState, BrowserProfile, CreateProfileInput, DownloadRecord } from './types';
 import { formatProxyInput, parseProxyInput } from './proxyInput';
 import { filterProfiles, type ProfileGroupFilter } from './profileFilters';
 import { buildSelfTestChecklist } from './selfTestReport';
@@ -32,6 +32,7 @@ export default function App() {
   const [activeGroup, setActiveGroup] = useState<ProfileGroupFilter>('ALL');
   const [openUrl, setOpenUrl] = useState('https://example.com');
   const [navigationState, setNavigationState] = useState<BrowserNavigationState>();
+  const [downloads, setDownloads] = useState<DownloadRecord[]>([]);
   const [isEditingUrl, setIsEditingUrl] = useState(false);
   const [proxyFormUrl, setProxyFormUrl] = useState('');
   const [selectedRegion, setSelectedRegion] = useState(DEFAULT_REGION);
@@ -82,7 +83,8 @@ export default function App() {
 
   useEffect(() => window.api.onProfilesChanged(() => {
     void refreshProfiles();
-  }), []);
+    void refreshDownloads(selected?.id);
+  }), [selected?.id]);
 
   useEffect(() => {
     if (!isEditingUrl) {
@@ -111,6 +113,10 @@ export default function App() {
       cancelled = true;
     };
   }, [selected?.id, selectedTabId, selected?.lastOpenedUrl, selected?.tabs]);
+
+  useEffect(() => {
+    void refreshDownloads(selected?.id);
+  }, [selected?.id]);
 
   useEffect(() => {
     if (!isProxyEditorOpen) {
@@ -201,6 +207,23 @@ export default function App() {
       const list = await window.api.listProfiles();
       setProfiles(list);
       setSelectedId((current) => current ?? list[0]?.id);
+    } catch (caught) {
+      setError(toMessage(caught));
+    }
+  }
+
+  async function refreshDownloads(profileId?: string) {
+    try {
+      setDownloads(await window.api.listDownloads(profileId));
+    } catch {
+      setDownloads([]);
+    }
+  }
+
+  async function cancelDownload(id: string) {
+    try {
+      await window.api.cancelDownload(id);
+      await refreshDownloads(selected?.id);
     } catch (caught) {
       setError(toMessage(caught));
     }
@@ -585,11 +608,13 @@ export default function App() {
           {isInspectorCollapsed ? '<' : '>'}
         </button>
         {selected ? (
-          <Inspector
-            profile={selected}
-            onRegenerateFingerprint={regenerateFingerprint}
-            onOpenSelfTest={openFingerprintSelfTest}
-          />
+              <Inspector
+                profile={selected}
+                downloads={downloads}
+                onCancelDownload={cancelDownload}
+                onRegenerateFingerprint={regenerateFingerprint}
+                onOpenSelfTest={openFingerprintSelfTest}
+              />
         ) : <EmptyInspector />}
       </aside>
 
@@ -713,10 +738,14 @@ export default function App() {
 
 function Inspector({
   profile,
+  downloads,
+  onCancelDownload,
   onRegenerateFingerprint,
   onOpenSelfTest,
 }: {
   profile: BrowserProfile;
+  downloads: DownloadRecord[];
+  onCancelDownload(id: string): void;
   onRegenerateFingerprint(profile: BrowserProfile): void;
   onOpenSelfTest(profile: BrowserProfile): void;
 }) {
@@ -762,6 +791,19 @@ function Inspector({
         {deviceRows.map((row) => (
           <Kv label={row.label} value={row.value} key={row.label} />
         ))}
+      </Panel>
+      <Panel panelId="downloads" title="downloads" meta={downloads.length ? `${downloads.length}` : 'none'} compact initialCollapsed>
+        {downloads.length > 0 ? downloads.map((download) => (
+          <div className="download-row" key={download.id}>
+            <div>
+              <strong>{download.filename}</strong>
+              <span>{download.status} · {formatDownloadSize(download.receivedBytes)}{download.totalBytes ? ` / ${formatDownloadSize(download.totalBytes)}` : ''}</span>
+            </div>
+            {download.status === 'progressing' ? (
+              <button type="button" onClick={() => onCancelDownload(download.id)}>取消</button>
+            ) : null}
+          </div>
+        )) : <div className="trace">no downloads for this profile</div>}
       </Panel>
       <Panel panelId="self-test-report" title="self-test report" meta={profile.selfTestSummary ?? 'pending'}>
         {network ? <Kv label="exit ip" value={network.publicIp ? `${network.publicIp}${network.proxyConfigured ? ' · proxy' : ' · direct'}` : network.error ?? 'not detected'} /> : null}
@@ -1000,6 +1042,16 @@ function Kv({ label, value }: { label: string; value: string }) {
       <div title={value}>{value}</div>
     </div>
   );
+}
+
+function formatDownloadSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function toMessage(error: unknown): string {

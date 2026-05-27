@@ -26,7 +26,7 @@ describe('NativeBrowserViewController', () => {
     await controller.show(host, makeProfile('profile-a'), 'tab-a', 'https://example.com/', { x: 1, y: 2, width: 300, height: 200 });
 
     expect(calls).toEqual(['prepare', 'created']);
-    expect(host.addBrowserView).toHaveBeenCalledWith(view);
+    expect(host.addPageView).toHaveBeenCalledWith(view);
     expect(view.setBounds).toHaveBeenCalledWith({ x: 1, y: 2, width: 600, height: 400 });
     expect(view.setAutoResize).toHaveBeenCalledWith({ width: false, height: false });
     expect(view.webContents.loadURL).toHaveBeenCalledWith('https://example.com/');
@@ -53,9 +53,9 @@ describe('NativeBrowserViewController', () => {
     await controller.show(host, makeProfile('profile-a'), 'tab-a', 'https://a.example/', bounds());
     await controller.show(host, makeProfile('profile-b'), 'tab-a', 'https://b.example/', bounds());
 
-    expect(host.removeBrowserView).toHaveBeenCalledWith(first);
+    expect(host.removePageView).toHaveBeenCalledWith(first);
     expect(first.webContents.close).toHaveBeenCalled();
-    expect(host.addBrowserView).toHaveBeenCalledWith(second);
+    expect(host.addPageView).toHaveBeenCalledWith(second);
     expect(controller.currentView()).toBe(second);
     expect(controller.currentProfileId()).toBe('profile-b');
   });
@@ -81,9 +81,9 @@ describe('NativeBrowserViewController', () => {
     await controller.show(host, profile, 'tab-b', 'https://b.example/', bounds());
     await controller.show(host, profile, 'tab-a', 'https://a.example/', bounds());
 
-    expect(host.removeBrowserView).toHaveBeenCalledWith(first);
-    expect(host.removeBrowserView).toHaveBeenCalledWith(second);
-    expect(host.addBrowserView).toHaveBeenLastCalledWith(first);
+    expect(host.removePageView).toHaveBeenCalledWith(first);
+    expect(host.removePageView).toHaveBeenCalledWith(second);
+    expect(host.addPageView).toHaveBeenLastCalledWith(first);
     expect(first.webContents.loadURL).not.toHaveBeenCalled();
     expect(second.webContents.loadURL).not.toHaveBeenCalled();
     expect(controller.currentView()).toBe(first);
@@ -103,7 +103,7 @@ describe('NativeBrowserViewController', () => {
     controller.goForward();
     controller.reload();
 
-    expect(host.removeBrowserView).toHaveBeenCalledWith(view);
+    expect(host.removePageView).toHaveBeenCalledWith(view);
     expect(view.webContents.close).not.toHaveBeenCalled();
     expect(view.webContents.goBack).toHaveBeenCalled();
     expect(view.webContents.goForward).toHaveBeenCalled();
@@ -224,8 +224,8 @@ function makeController(view: NativeBrowserViewLike): NativeBrowserViewControlle
 
 function makeHost(): NativeBrowserHost {
   return {
-    addBrowserView: vi.fn(),
-    removeBrowserView: vi.fn(),
+    addPageView: vi.fn(),
+    removePageView: vi.fn(),
   };
 }
 

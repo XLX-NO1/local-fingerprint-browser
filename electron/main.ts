@@ -1,8 +1,9 @@
-import { app, BrowserView, BrowserWindow, ipcMain, Menu, nativeImage, session, Tray, webContents, type AuthInfo, type Event, type LoginAuthenticationResponseDetails } from 'electron';
+import { app, BrowserView, BrowserWindow, ipcMain, Menu, nativeImage, session, Tray, webContents, type AuthInfo, type Event, type LoginAuthenticationResponseDetails, type Session } from 'electron';
 import { join } from 'node:path';
 import { BrowserLauncher, findChromiumPath } from './services/browserLauncher';
 import { ProfileStore } from './services/profileStore';
 import { SettingsStore } from './services/settingsStore';
+import { DownloadController } from './services/downloadController';
 import { checkProxyReachability } from './services/proxy';
 import { proxyAuthForLogin } from './services/proxy';
 import {
@@ -14,6 +15,7 @@ import {
 } from './services/embeddedFingerprint';
 import { configureProfileSession } from './services/embeddedSession';
 import { NativeBrowserViewController, type NativeBrowserHost, type NativeBrowserViewLike } from './services/nativeBrowserViewController';
+import { BrowserViewPageHost, BrowserViewPageView } from './services/browserViewPageView';
 import { prepareSelfTestPage } from './services/selfTestPage';
 import { buildNativeSelfTestCaptureScript, extractSelfTestReportFromExecutionResult, summarizeSelfTestReport } from './services/selfTestResult';
 import type { AppSettings, BrowserNavigationState, BrowserProfile, CreateProfileInput, UpdateProfileInput } from '../src/types';
@@ -41,15 +43,17 @@ let nativeBrowserMetadataTimer: NodeJS.Timeout | undefined;
 let nativeBrowserWidthFitTimer: NodeJS.Timeout | undefined;
 const nativeBrowserHandlerWebContents = new WeakSet<Electron.WebContents>();
 const hiddenSelfTestWindows = new Set<BrowserWindow>();
+const downloadController = new DownloadController();
+const downloadSessionPartitions = new Set<string>();
 const nativeBrowserController = new NativeBrowserViewController({
-  createView: (profile) => new BrowserView({
+  createView: (profile) => new BrowserViewPageView(new BrowserView({
     webPreferences: buildEmbeddedBrowserViewPreferences(profile),
-  }),
+  })),
   prepareProfileSession: configureEmbeddedSession,
   shouldRecreateView: shouldRecreateEmbeddedBrowserView,
   viewState: embeddedBrowserViewState,
   onViewCreated: async (view, profile) => {
-    const electronView = view as BrowserView;
+    const electronView = nativeBrowserViewFromPageView(view);
     attachNativeBrowserProxyAuth(electronView, profile);
     attachNativeBrowserTabHandlers(electronView);
     await applyNativeBrowserFingerprint(electronView, profile);
@@ -585,6 +589,12 @@ function registerIpc(): void {
     const state = nativeBrowserController.navigationStateForTab(tabId);
     return state?.profileId === profileId ? state : undefined;
   });
+  ipcMain.handle('downloads:list', (_event, profileId?: string) => downloadController.list(profileId));
+  ipcMain.handle('downloads:cancel', (_event, id: string) => {
+    const cancelled = downloadController.cancel(id);
+    notifyProfilesChanged();
+    return cancelled;
+  });
   ipcMain.handle('native-browser:go-back', () => {
     nativeBrowserController.goBack();
   });
@@ -634,6 +644,47 @@ async function configureEmbeddedSession(profile: BrowserProfile): Promise<void> 
   const profileSession = session.fromPartition(partition);
   await writeEmbeddedFingerprintPreload(profile);
   await configureProfileSession(profileSession, profile);
+  attachProfileDownloadHandlers(profileSession, profile.id, partition);
+}
+
+function attachProfileDownloadHandlers(profileSession: Session, profileId: string, partition: string): void {
+  if (downloadSessionPartitions.has(partition)) {
+    return;
+  }
+  downloadSessionPartitions.add(partition);
+  profileSession.on('will-download', (_event, item) => {
+    const filename = item.getFilename();
+    const savePath = item.getSavePath() || join(app.getPath('downloads'), filename);
+    item.setSavePath(savePath);
+    const id = downloadController.start({
+      profileId,
+      tabId: nativeBrowserController.currentTabId(),
+      url: item.getURL(),
+      filename,
+      savePath,
+      totalBytes: item.getTotalBytes(),
+      cancel: () => item.cancel(),
+    });
+    notifyProfilesChanged();
+    item.on('updated', (_updatedEvent, state) => {
+      downloadController.updateProgress(id, {
+        receivedBytes: item.getReceivedBytes(),
+        totalBytes: item.getTotalBytes(),
+      });
+      if (state === 'interrupted') {
+        downloadController.finish(id, 'interrupted');
+      }
+      notifyProfilesChanged();
+    });
+    item.once('done', (_doneEvent, state) => {
+      downloadController.updateProgress(id, {
+        receivedBytes: item.getReceivedBytes(),
+        totalBytes: item.getTotalBytes(),
+      });
+      downloadController.finish(id, state === 'completed' ? 'completed' : state === 'cancelled' ? 'cancelled' : 'interrupted', state);
+      notifyProfilesChanged();
+    });
+  });
 }
 
 async function applyNativeBrowserFingerprint(nativeBrowserView: BrowserView, profile: BrowserProfile): Promise<void> {
@@ -650,17 +701,19 @@ async function applyNativeBrowserFingerprint(nativeBrowserView: BrowserView, pro
 }
 
 function currentNativeBrowserView(): BrowserView | undefined {
-  return nativeBrowserController.currentView() as BrowserView | undefined;
+  const view = nativeBrowserController.currentView();
+  return view ? nativeBrowserViewFromPageView(view) : undefined;
 }
 
 function currentNativeBrowserHost(window = mainWindow): NativeBrowserHost | undefined {
   if (!window) {
     return undefined;
   }
-  return {
-    addBrowserView: (view: NativeBrowserViewLike) => window.addBrowserView(view as BrowserView),
-    removeBrowserView: (view: NativeBrowserViewLike) => window.removeBrowserView(view as BrowserView),
-  };
+  return new BrowserViewPageHost(window);
+}
+
+function nativeBrowserViewFromPageView(view: NativeBrowserViewLike): BrowserView {
+  return (view as BrowserViewPageView).nativeView as BrowserView;
 }
 
 function attachNativeBrowserProxyAuth(view: BrowserView | BrowserWindow, profile: BrowserProfile): void {

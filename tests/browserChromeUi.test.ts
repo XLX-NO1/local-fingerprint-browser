@@ -84,8 +84,8 @@ describe('browser chrome UI', () => {
     expect(showHandler).toContain('nativeBrowserController.show(host, profile, tabId, url, bounds);');
     expect(showHandler).not.toContain('clampBrowserViewBoundsToWindow');
     const controllerSource = readFileSync('electron/services/nativeBrowserViewController.ts', 'utf8');
-    expect(controllerSource.indexOf('host.addBrowserView(entry.view);')).toBeGreaterThan(-1);
-    expect(controllerSource.indexOf('host.addBrowserView(entry.view);')).toBeLessThan(controllerSource.indexOf('this.resize(bounds);'));
+    expect(controllerSource.indexOf('host.addPageView(entry.view);')).toBeGreaterThan(-1);
+    expect(controllerSource.indexOf('host.addPageView(entry.view);')).toBeLessThan(controllerSource.indexOf('this.resize(bounds);'));
     expect(controllerSource).toContain('entry.view.setBounds(entry.bounds);');
   });
 
@@ -224,6 +224,14 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('device profile');
     expect(appSource).toContain('buildDeviceProfileRows');
     expect(appSource).toContain('deviceRows.map');
+  });
+
+  it('shows profile scoped downloads in the inspector', () => {
+    expect(appSource).toContain('listDownloads');
+    expect(appSource).toContain('cancelDownload');
+    expect(appSource).toContain('panelId="downloads"');
+    expect(appSource).toContain('className="download-row"');
+    expect(styles).toContain('.download-row');
   });
 
   it('makes inspector panels compact and collapsible so lower reports stay reachable', () => {

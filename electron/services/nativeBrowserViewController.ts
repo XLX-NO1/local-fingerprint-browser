@@ -1,31 +1,11 @@
 import type { BrowserNavigationState, BrowserProfile } from '../../src/types';
 import type { BrowserViewBounds } from '../../src/nativeBrowserView';
 import type { EmbeddedBrowserViewState } from './embeddedFingerprint';
+import type { BrowserPageHost, BrowserPageViewLike, BrowserPageWebContentsLike } from './browserPageView';
 
-export interface NativeBrowserWebContentsLike {
-  isDestroyed(): boolean;
-  getURL(): string;
-  getTitle(): string;
-  loadURL(url: string): Promise<void>;
-  close(): void;
-  setUserAgent(userAgent: string): void;
-  canGoBack(): boolean;
-  canGoForward(): boolean;
-  goBack(): void;
-  goForward(): void;
-  reload(): void;
-}
-
-export interface NativeBrowserViewLike {
-  webContents: NativeBrowserWebContentsLike;
-  setBounds(bounds: BrowserViewBounds): void;
-  setAutoResize(options: { width: boolean; height: boolean }): void;
-}
-
-export interface NativeBrowserHost {
-  addBrowserView(view: NativeBrowserViewLike): void;
-  removeBrowserView(view: NativeBrowserViewLike): void;
-}
+export type NativeBrowserWebContentsLike = BrowserPageWebContentsLike;
+export type NativeBrowserViewLike = BrowserPageViewLike;
+export type NativeBrowserHost = BrowserPageHost;
 
 export interface NativeBrowserViewControllerOptions {
   createView(profile: BrowserProfile): NativeBrowserViewLike;
@@ -49,7 +29,7 @@ export class NativeBrowserViewController {
     if (this.activeTabId && this.activeTabId !== tabId) {
       const active = this.entries.get(this.activeTabId);
       if (active?.attached) {
-        host.removeBrowserView(active.view);
+      host.removePageView(active.view);
         active.attached = false;
       }
     }
@@ -70,7 +50,7 @@ export class NativeBrowserViewController {
 
     this.activeTabId = tabId;
     if (!entry.attached) {
-      host.addBrowserView(entry.view);
+      host.addPageView(entry.view);
       entry.attached = true;
     }
 
@@ -99,7 +79,7 @@ export class NativeBrowserViewController {
   hide(host: NativeBrowserHost): void {
     const entry = this.currentEntry();
     if (entry?.attached) {
-      host.removeBrowserView(entry.view);
+      host.removePageView(entry.view);
       entry.attached = false;
     }
   }
@@ -225,7 +205,7 @@ export class NativeBrowserViewController {
 
   private disposeEntry(host: NativeBrowserHost, tabId: string, entry: NativeBrowserViewEntry): void {
     if (entry.attached) {
-      host.removeBrowserView(entry.view);
+      host.removePageView(entry.view);
     }
     if (!entry.view.webContents.isDestroyed()) {
       entry.view.webContents.close();
