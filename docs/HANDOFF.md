@@ -50,7 +50,7 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 最近一次验证：
 
 - `npm run typecheck` 通过
-- `npm run test` 通过，35 个测试文件，164 个测试
+- `npm run test` 通过，36 个测试文件，169 个测试
 - `npm run build` 通过
 - Electron 已能打开本地软件窗口
 
@@ -285,7 +285,7 @@ export interface DownloadRecord {
 
 ### 下一阶段 4：权限、外部协议和证书策略
 
-状态：权限默认拒绝策略已落地。新增 `permissionController` 并接入 `embeddedSession`。外部协议和证书错误策略仍需继续补。
+状态：权限默认拒绝策略已落地。新增 `permissionController` 并接入 `embeddedSession`。外部协议策略已接入 native browser 层，`mailto:`、`tel:` 等协议会被阻止并写入导航错误。证书错误策略仍需继续补。
 
 目标：把敏感能力默认收紧，避免网页突破 profile 边界。
 
@@ -314,6 +314,8 @@ export interface DownloadRecord {
 - 证书错误不会静默继续。
 
 ### 下一阶段 5：崩溃恢复和启动 reconcile
+
+状态：部分落地。启动时 persisted running profile 已 reconcile 为 warning；tab crash runtime 会写回 tab 记录，活动 tab 崩溃时前端显示可重新载入的崩溃状态。
 
 目标：页面崩溃、应用重启后状态可解释，不让用户误以为环境仍正常。
 

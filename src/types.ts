@@ -68,6 +68,11 @@ export interface BrowserTab {
   id: string;
   title: string;
   url: string;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  isLoading?: boolean;
+  crashed?: boolean;
+  lastError?: string;
   createdAt: string;
   updatedAt: string;
 }

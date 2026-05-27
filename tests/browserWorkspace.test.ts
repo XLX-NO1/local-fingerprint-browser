@@ -9,6 +9,7 @@ import {
   toggleBookmarkInProfile,
   updateActiveTabMetadata,
   updateTabMetadataInProfile,
+  updateTabRuntimeStateInProfile,
 } from '../src/browserWorkspace';
 
 describe('browser workspace model', () => {
@@ -95,6 +96,25 @@ describe('browser workspace model', () => {
     expect(updated.tabs?.find((tab) => tab.id === firstTabId)).toMatchObject({
       url: 'https://first.example/redirected',
       title: 'Redirected',
+    });
+  });
+
+  it('marks a crashed tab without marking the whole profile failed', () => {
+    const profile = createBlankTab(makeProfile(), 'example.com');
+    const tabId = profile.activeTabId!;
+
+    const updated = updateTabRuntimeStateInProfile(profile, tabId, {
+      crashed: true,
+      isLoading: false,
+      lastError: 'render-process-gone: crashed',
+    });
+
+    expect(updated.status).toBe('idle');
+    expect(updated.lastError).toBeUndefined();
+    expect(updated.tabs?.[0]).toMatchObject({
+      crashed: true,
+      isLoading: false,
+      lastError: 'render-process-gone: crashed',
     });
   });
 

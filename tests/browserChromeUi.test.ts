@@ -143,6 +143,18 @@ describe('browser chrome UI', () => {
     expect(attachHandler).toContain('updateNativeBrowserNavigationState(view');
   });
 
+  it('blocks external protocols in the native browser layer', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const attachHandler = mainSource.slice(
+      mainSource.indexOf('function attachNativeBrowserTabHandlers'),
+      mainSource.indexOf('function disposeNativeBrowserView'),
+    );
+
+    expect(mainSource).toContain('navigationDecisionForUrl');
+    expect(attachHandler).toContain("view.webContents.on('will-navigate'");
+    expect(attachHandler).toContain("return { action: 'deny' };");
+  });
+
   it('does not explicitly close native BrowserView webContents during app quit', () => {
     const mainSource = readFileSync('electron/main.ts', 'utf8');
     const beforeQuitHandler = mainSource.slice(
@@ -232,6 +244,14 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('panelId="downloads"');
     expect(appSource).toContain('className="download-row"');
     expect(styles).toContain('.download-row');
+  });
+
+  it('shows a reloadable crash state for the active tab', () => {
+    expect(appSource).toContain('activeTabCrashed');
+    expect(appSource).toContain('className="browser-empty crashed-tab"');
+    expect(appSource).toContain('标签页已崩溃');
+    expect(appSource).toContain('重新载入');
+    expect(styles).toContain('.crashed-tab');
   });
 
   it('makes inspector panels compact and collapsible so lower reports stay reachable', () => {

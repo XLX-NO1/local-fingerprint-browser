@@ -4,6 +4,7 @@ import { BrowserLauncher, findChromiumPath } from './services/browserLauncher';
 import { ProfileStore } from './services/profileStore';
 import { SettingsStore } from './services/settingsStore';
 import { DownloadController } from './services/downloadController';
+import { navigationDecisionForUrl } from './services/navigationPolicy';
 import { checkProxyReachability } from './services/proxy';
 import { proxyAuthForLogin } from './services/proxy';
 import {
@@ -28,6 +29,7 @@ import {
   openUrlInNewTab,
   toggleBookmarkInProfile,
   updateTabMetadataInProfile,
+  updateTabRuntimeStateInProfile,
 } from '../src/browserWorkspace';
 import { computeFitPageZoom, measurePageScript, type FitSize } from '../src/webviewFit';
 import { FIXED_BROWSER_ZOOM, computeWidthFitZoom, cssRectToBrowserViewBounds, type BrowserViewBounds } from '../src/nativeBrowserView';
@@ -208,8 +210,21 @@ function scheduleNativeBrowserMetadataUpdate(view: BrowserView, url?: string): v
 function updateNativeBrowserNavigationState(view: BrowserView, patch: Partial<Omit<BrowserNavigationState, 'profileId' | 'tabId'>> = {}): void {
   const state = nativeBrowserController.updateNavigationStateForView(view, patch);
   if (state) {
+    void persistNativeBrowserRuntimeState(state).catch(() => undefined);
     notifyProfilesChanged();
   }
+}
+
+async function persistNativeBrowserRuntimeState(state: BrowserNavigationState): Promise<void> {
+  const profile = await store.get(state.profileId);
+  const updated = updateTabRuntimeStateInProfile(profile, state.tabId, {
+    canGoBack: state.canGoBack,
+    canGoForward: state.canGoForward,
+    isLoading: state.isLoading,
+    crashed: state.crashed,
+    lastError: state.lastError,
+  });
+  await store.update(profile.id, { tabs: updated.tabs });
 }
 
 async function updateNativeBrowserTabMetadata(nativeBrowserView: BrowserView, url?: string): Promise<void> {
@@ -261,8 +276,20 @@ function attachNativeBrowserTabHandlers(view: BrowserView): void {
   }
   nativeBrowserHandlerWebContents.add(view.webContents);
   view.webContents.setWindowOpenHandler(({ url }) => {
-    void openNativeBrowserPopupAsTab(url).catch(() => undefined);
+    const decision = navigationDecisionForUrl(url);
+    if (decision.action === 'allow') {
+      void openNativeBrowserPopupAsTab(url).catch(() => undefined);
+    } else {
+      updateNativeBrowserNavigationState(view, { lastError: decision.reason });
+    }
     return { action: 'deny' };
+  });
+  view.webContents.on('will-navigate', (event, url) => {
+    const decision = navigationDecisionForUrl(url);
+    if (decision.action === 'block') {
+      event.preventDefault();
+      updateNativeBrowserNavigationState(view, { lastError: decision.reason });
+    }
   });
   view.webContents.on('dom-ready', resetNativeBrowserZoom);
   view.webContents.on('dom-ready', () => scheduleNativeBrowserWidthFit(80));

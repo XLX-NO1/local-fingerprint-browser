@@ -68,6 +68,9 @@ export default function App() {
   const isSelfTestView = isFingerprintSelfTestUrl(selected?.lastOpenedUrl);
   const isModalOpen = isEditorOpen || isSettingsOpen || isProxyEditorOpen;
   const selectedTabId = selected?.activeTabId ?? selected?.id;
+  const selectedTab = selected?.tabs?.find((tab) => tab.id === selected.activeTabId) ?? selected?.tabs?.[0];
+  const activeTabCrashed = Boolean(navigationState?.crashed || selectedTab?.crashed);
+  const activeTabError = navigationState?.lastError ?? selectedTab?.lastError;
   const groupCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const profile of profiles) {
@@ -581,7 +584,13 @@ export default function App() {
         <section className="browser-panel full-browser">
           {selected ? (
             selected.lastOpenedUrl ? (
-              isSelfTestView ? (
+              activeTabCrashed ? (
+                <div className="browser-empty crashed-tab">
+                  <div className="empty-title">标签页已崩溃</div>
+                  <div className="empty-sub">{activeTabError ?? '页面进程已退出，可以尝试重新载入。'}</div>
+                  <button type="button" onClick={() => void reloadNativeBrowserView(selected)}>重新载入</button>
+                </div>
+              ) : isSelfTestView ? (
                 <SelfTestReportView profile={selected} />
               ) : (
                 <div className="native-browser-frame" ref={nativeBrowserFrameRef}>

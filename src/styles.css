@@ -538,6 +538,20 @@ button.primary {
   color: var(--muted);
 }
 
+.crashed-tab {
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.crashed-tab .empty-title {
+  color: var(--red);
+}
+
+.crashed-tab button {
+  min-width: 86px;
+  padding: 0 8px;
+}
+
 .sidebar-filters,
 .group-strip {
   display: flex;

@@ -97,6 +97,26 @@ export function updateTabMetadataInProfile(profile: BrowserProfile, tabId: strin
   };
 }
 
+export function updateTabRuntimeStateInProfile(
+  profile: BrowserProfile,
+  tabId: string,
+  input: Pick<BrowserTab, 'canGoBack' | 'canGoForward' | 'isLoading' | 'crashed' | 'lastError'>,
+): BrowserProfile {
+  const tab = (profile.tabs ?? []).find((item) => item.id === tabId);
+  if (!tab) {
+    return profile;
+  }
+  const updatedTab: BrowserTab = {
+    ...tab,
+    ...input,
+    updatedAt: new Date().toISOString(),
+  };
+  return {
+    ...profile,
+    tabs: (profile.tabs ?? []).map((item) => (item.id === tabId ? updatedTab : item)),
+  };
+}
+
 export function closeTabInProfile(profile: BrowserProfile, tabId: string): BrowserProfile {
   const tabs = (profile.tabs ?? []).filter((tab) => tab.id !== tabId);
   const activeTab = tabs.at(-1);
