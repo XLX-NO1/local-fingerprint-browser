@@ -9,8 +9,8 @@ type WebContentsViewLike = {
 
 type WebContentsViewHostLike = {
   contentView: {
-    addChildView(view: WebContentsViewLike): void;
-    removeChildView(view: WebContentsViewLike): void;
+    addChildView(view: WebContentsView): void;
+    removeChildView(view: WebContentsView): void;
   };
 };
 
@@ -40,10 +40,10 @@ export class WebContentsViewPageHost implements BrowserPageHost {
   constructor(private readonly host: WebContentsViewHostLike) {}
 
   addPageView(view: BrowserPageViewLike): void {
-    this.host.contentView.addChildView((view as WebContentsViewPageView).nativeView as WebContentsViewLike);
+    this.host.contentView.addChildView((view as WebContentsViewPageView).nativeView as WebContentsView);
   }
 
   removePageView(view: BrowserPageViewLike): void {
-    this.host.contentView.removeChildView((view as WebContentsViewPageView).nativeView as WebContentsViewLike);
+    this.host.contentView.removeChildView((view as WebContentsViewPageView).nativeView as WebContentsView);
   }
 }

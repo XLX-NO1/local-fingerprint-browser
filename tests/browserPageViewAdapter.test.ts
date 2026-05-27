@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BrowserViewPageHost, BrowserViewPageView } from '../electron/services/browserViewPageView';
+import { browserPageViewModeFromEnv } from '../electron/services/browserPageViewMode';
 import { WebContentsViewPageHost, WebContentsViewPageView } from '../electron/services/webContentsViewPageView';
 import type { BrowserPageViewLike } from '../electron/services/browserPageView';
 
@@ -67,6 +68,13 @@ describe('browser page view adapters', () => {
     expect(browserViewWindow.removeBrowserView).toHaveBeenCalledWith(browserPageView.nativeView);
     expect(webContentsViewWindow.contentView.addChildView).toHaveBeenCalledWith(webContentsPageView.nativeView);
     expect(webContentsViewWindow.contentView.removeChildView).toHaveBeenCalledWith(webContentsPageView.nativeView);
+  });
+
+  it('selects BrowserView by default and WebContentsView behind an explicit runtime switch', () => {
+    expect(browserPageViewModeFromEnv({})).toBe('browser-view');
+    expect(browserPageViewModeFromEnv({ USE_WEB_CONTENTS_VIEW: '0' })).toBe('browser-view');
+    expect(browserPageViewModeFromEnv({ USE_WEB_CONTENTS_VIEW: '1' })).toBe('web-contents-view');
+    expect(browserPageViewModeFromEnv({ USE_WEB_CONTENTS_VIEW: 'true' })).toBe('web-contents-view');
   });
 });
 

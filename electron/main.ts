@@ -1,4 +1,4 @@
-import { app, BrowserView, BrowserWindow, ipcMain, Menu, nativeImage, session, Tray, webContents, type AuthInfo, type Event, type LoginAuthenticationResponseDetails, type Session } from 'electron';
+import { app, BrowserView, BrowserWindow, ipcMain, Menu, nativeImage, session, Tray, webContents, WebContentsView, type AuthInfo, type Event, type LoginAuthenticationResponseDetails, type Session } from 'electron';
 import { join } from 'node:path';
 import { BrowserLauncher, findChromiumPath } from './services/browserLauncher';
 import { ProfileStore } from './services/profileStore';
@@ -16,7 +16,9 @@ import {
 } from './services/embeddedFingerprint';
 import { configureProfileSession } from './services/embeddedSession';
 import { NativeBrowserViewController, type NativeBrowserHost, type NativeBrowserViewLike } from './services/nativeBrowserViewController';
+import { browserPageViewModeFromEnv, type BrowserPageViewMode } from './services/browserPageViewMode';
 import { BrowserViewPageHost, BrowserViewPageView } from './services/browserViewPageView';
+import { WebContentsViewPageHost, WebContentsViewPageView } from './services/webContentsViewPageView';
 import { prepareSelfTestPage } from './services/selfTestPage';
 import { buildNativeSelfTestCaptureScript, extractSelfTestReportFromExecutionResult, summarizeSelfTestReport } from './services/selfTestResult';
 import type { AppSettings, BrowserNavigationState, BrowserProfile, CreateProfileInput, UpdateProfileInput } from '../src/types';
@@ -47,18 +49,16 @@ const nativeBrowserHandlerWebContents = new WeakSet<Electron.WebContents>();
 const hiddenSelfTestWindows = new Set<BrowserWindow>();
 const downloadController = new DownloadController();
 const downloadSessionPartitions = new Set<string>();
+const browserPageViewMode = browserPageViewModeFromEnv(process.env);
 const nativeBrowserController = new NativeBrowserViewController({
-  createView: (profile) => new BrowserViewPageView(new BrowserView({
-    webPreferences: buildEmbeddedBrowserViewPreferences(profile),
-  })),
+  createView: createNativeBrowserPageView,
   prepareProfileSession: configureEmbeddedSession,
   shouldRecreateView: shouldRecreateEmbeddedBrowserView,
   viewState: embeddedBrowserViewState,
   onViewCreated: async (view, profile) => {
-    const electronView = nativeBrowserViewFromPageView(view);
-    attachNativeBrowserProxyAuth(electronView, profile);
-    attachNativeBrowserTabHandlers(electronView);
-    await applyNativeBrowserFingerprint(electronView, profile);
+    attachNativeBrowserProxyAuth(view, profile);
+    attachNativeBrowserTabHandlers(view);
+    await applyNativeBrowserFingerprint(view, profile);
   },
   toNativeBounds: cssRectToBrowserViewBounds,
   isNavigationAbort,
@@ -171,13 +171,31 @@ function notifyProfilesChanged(): void {
   mainWindow?.webContents.send('profiles:changed');
 }
 
+function createNativeBrowserPageView(profile: BrowserProfile): NativeBrowserViewLike {
+  const options = {
+    webPreferences: buildEmbeddedBrowserViewPreferences(profile),
+  };
+  return browserPageViewMode === 'web-contents-view'
+    ? new WebContentsViewPageView(new WebContentsView(options))
+    : new BrowserViewPageView(new BrowserView(options));
+}
+
+function currentBrowserPageViewMode(): BrowserPageViewMode {
+  return browserPageViewMode;
+}
+
+function electronWebContents(view: NativeBrowserViewLike): Electron.WebContents {
+  return view.webContents as Electron.WebContents;
+}
+
 function resetNativeBrowserZoom(): void {
   const nativeBrowserView = currentNativeBrowserView();
   if (!nativeBrowserView || nativeBrowserView.webContents.isDestroyed()) {
     return;
   }
-  nativeBrowserView.webContents.setZoomLevel(0);
-  nativeBrowserView.webContents.setZoomFactor(FIXED_BROWSER_ZOOM);
+  const contents = electronWebContents(nativeBrowserView);
+  contents.setZoomLevel(0);
+  contents.setZoomFactor(FIXED_BROWSER_ZOOM);
 }
 
 async function fitNativeBrowserWidth(): Promise<void> {
@@ -186,13 +204,14 @@ async function fitNativeBrowserWidth(): Promise<void> {
   if (!nativeBrowserView || !nativeBrowserBounds || nativeBrowserView.webContents.isDestroyed()) {
     return;
   }
-  const content = await nativeBrowserView.webContents.executeJavaScript(measurePageScript(), true) as FitSize;
+  const contents = electronWebContents(nativeBrowserView);
+  const content = await contents.executeJavaScript(measurePageScript(), true) as FitSize;
   if (!nativeBrowserView || nativeBrowserView.webContents.isDestroyed()) {
     return;
   }
   const zoom = computeWidthFitZoom(nativeBrowserBounds, content);
-  nativeBrowserView.webContents.setZoomLevel(0);
-  nativeBrowserView.webContents.setZoomFactor(zoom);
+  contents.setZoomLevel(0);
+  contents.setZoomFactor(zoom);
 }
 
 function scheduleNativeBrowserWidthFit(delayMs = 120): void {
@@ -205,7 +224,7 @@ function scheduleNativeBrowserWidthFit(delayMs = 120): void {
   }, delayMs);
 }
 
-function scheduleNativeBrowserMetadataUpdate(view: BrowserView, url?: string): void {
+function scheduleNativeBrowserMetadataUpdate(view: NativeBrowserViewLike, url?: string): void {
   if (nativeBrowserMetadataTimer) {
     clearTimeout(nativeBrowserMetadataTimer);
   }
@@ -214,7 +233,7 @@ function scheduleNativeBrowserMetadataUpdate(view: BrowserView, url?: string): v
   }, 120);
 }
 
-function updateNativeBrowserNavigationState(view: BrowserView, patch: Partial<Omit<BrowserNavigationState, 'profileId' | 'tabId'>> = {}): void {
+function updateNativeBrowserNavigationState(view: NativeBrowserViewLike, patch: Partial<Omit<BrowserNavigationState, 'profileId' | 'tabId'>> = {}): void {
   const state = nativeBrowserController.updateNavigationStateForView(view, patch);
   if (state) {
     void persistNativeBrowserRuntimeState(state).catch(() => undefined);
@@ -234,23 +253,24 @@ async function persistNativeBrowserRuntimeState(state: BrowserNavigationState): 
   await store.update(profile.id, { tabs: updated.tabs });
 }
 
-async function updateNativeBrowserTabMetadata(nativeBrowserView: BrowserView, url?: string): Promise<void> {
+async function updateNativeBrowserTabMetadata(nativeBrowserView: NativeBrowserViewLike, url?: string): Promise<void> {
   const metadata = nativeBrowserController.metadataForView(nativeBrowserView);
   if (!metadata || nativeBrowserView.webContents.isDestroyed()) {
     return;
   }
-  const nextUrl = url ?? nativeBrowserView.webContents.getURL();
+  const contents = electronWebContents(nativeBrowserView);
+  const nextUrl = url ?? contents.getURL();
   if (!nextUrl || nextUrl === 'about:blank') {
     return;
   }
   const profile = await store.get(metadata.profileId);
   const updated = updateTabMetadataInProfile(profile, metadata.tabId, {
     url: nextUrl,
-    title: nativeBrowserView.webContents.getTitle(),
+    title: contents.getTitle(),
   });
   nativeBrowserController.updateNavigationStateForView(nativeBrowserView, {
     url: nextUrl,
-    title: nativeBrowserView.webContents.getTitle(),
+    title: contents.getTitle(),
   });
   await store.update(profile.id, {
     tabs: updated.tabs,
@@ -277,12 +297,13 @@ async function openNativeBrowserPopupAsTab(url: string): Promise<void> {
   notifyProfilesChanged();
 }
 
-function attachNativeBrowserTabHandlers(view: BrowserView): void {
-  if (nativeBrowserHandlerWebContents.has(view.webContents)) {
+function attachNativeBrowserTabHandlers(view: NativeBrowserViewLike): void {
+  const contents = electronWebContents(view);
+  if (nativeBrowserHandlerWebContents.has(contents)) {
     return;
   }
-  nativeBrowserHandlerWebContents.add(view.webContents);
-  view.webContents.setWindowOpenHandler(({ url }) => {
+  nativeBrowserHandlerWebContents.add(contents);
+  contents.setWindowOpenHandler(({ url }) => {
     const decision = navigationDecisionForUrl(url);
     if (decision.action === 'allow') {
       void openNativeBrowserPopupAsTab(url).catch(() => undefined);
@@ -291,14 +312,14 @@ function attachNativeBrowserTabHandlers(view: BrowserView): void {
     }
     return { action: 'deny' };
   });
-  view.webContents.on('will-navigate', (event, url) => {
+  contents.on('will-navigate', (event, url) => {
     const decision = navigationDecisionForUrl(url);
     if (decision.action === 'block') {
       event.preventDefault();
       updateNativeBrowserNavigationState(view, { lastError: decision.reason });
     }
   });
-  view.webContents.on('certificate-error', (event, url, error, _certificate, callback) => {
+  contents.on('certificate-error', (event, url, error, _certificate, callback) => {
     const decision = certificateDecisionForError(url, error);
     if (decision.action === 'block') {
       event.preventDefault();
@@ -306,40 +327,40 @@ function attachNativeBrowserTabHandlers(view: BrowserView): void {
       callback(false);
     }
   });
-  view.webContents.on('dom-ready', resetNativeBrowserZoom);
-  view.webContents.on('dom-ready', () => scheduleNativeBrowserWidthFit(80));
-  view.webContents.on('did-start-loading', () => updateNativeBrowserNavigationState(view, { isLoading: true, crashed: false, lastError: undefined }));
-  view.webContents.on('did-finish-load', () => scheduleNativeBrowserWidthFit());
-  view.webContents.on('did-stop-loading', () => {
+  contents.on('dom-ready', resetNativeBrowserZoom);
+  contents.on('dom-ready', () => scheduleNativeBrowserWidthFit(80));
+  contents.on('did-start-loading', () => updateNativeBrowserNavigationState(view, { isLoading: true, crashed: false, lastError: undefined }));
+  contents.on('did-finish-load', () => scheduleNativeBrowserWidthFit());
+  contents.on('did-stop-loading', () => {
     updateNativeBrowserNavigationState(view, { isLoading: false });
     scheduleNativeBrowserWidthFit();
   });
-  view.webContents.on('did-navigate', (_event, url) => {
+  contents.on('did-navigate', (_event, url) => {
     updateNativeBrowserNavigationState(view, { url, isLoading: false, crashed: false, lastError: undefined });
     scheduleNativeBrowserMetadataUpdate(view, url);
   });
-  view.webContents.on('did-navigate-in-page', (_event, url) => {
+  contents.on('did-navigate-in-page', (_event, url) => {
     updateNativeBrowserNavigationState(view, { url });
     scheduleNativeBrowserMetadataUpdate(view, url);
   });
-  view.webContents.on('page-title-updated', () => {
-    updateNativeBrowserNavigationState(view, { title: view.webContents.getTitle() });
+  contents.on('page-title-updated', () => {
+    updateNativeBrowserNavigationState(view, { title: contents.getTitle() });
     scheduleNativeBrowserMetadataUpdate(view);
   });
-  view.webContents.on('did-fail-load', (_event, _errorCode, errorDescription, validatedURL) => {
+  contents.on('did-fail-load', (_event, _errorCode, errorDescription, validatedURL) => {
     updateNativeBrowserNavigationState(view, {
       isLoading: false,
       lastError: `${errorDescription}${validatedURL ? `: ${validatedURL}` : ''}`,
     });
   });
-  view.webContents.on('render-process-gone', (_event, details) => {
+  contents.on('render-process-gone', (_event, details) => {
     updateNativeBrowserNavigationState(view, {
       isLoading: false,
       crashed: true,
       lastError: `render-process-gone: ${details.reason}`,
     });
   });
-  view.webContents.on('did-finish-load', () => {
+  contents.on('did-finish-load', () => {
     void captureNativeSelfTestResult().catch(() => undefined);
   });
 }
@@ -387,12 +408,13 @@ async function captureNativeSelfTestResult(): Promise<void> {
   if (!nativeBrowserView || !nativeBrowserProfileId || nativeBrowserView.webContents.isDestroyed()) {
     return;
   }
-  const url = nativeBrowserView.webContents.getURL();
+  const contents = electronWebContents(nativeBrowserView);
+  const url = contents.getURL();
   const profile = await store.get(nativeBrowserProfileId);
   if (!profile.selfTestUrl || url !== profile.selfTestUrl) {
     return;
   }
-  const rawResult = await nativeBrowserView.webContents.executeJavaScript(buildNativeSelfTestCaptureScript(), true);
+  const rawResult = await contents.executeJavaScript(buildNativeSelfTestCaptureScript(), true);
   const report = extractSelfTestReportFromExecutionResult(rawResult);
   const summary = summarizeSelfTestReport(report);
   if (!report || !summary) {
@@ -729,11 +751,11 @@ function attachProfileDownloadHandlers(profileSession: Session, profileId: strin
   });
 }
 
-async function applyNativeBrowserFingerprint(nativeBrowserView: BrowserView, profile: BrowserProfile): Promise<void> {
+async function applyNativeBrowserFingerprint(nativeBrowserView: NativeBrowserViewLike, profile: BrowserProfile): Promise<void> {
   if (!nativeBrowserView || nativeBrowserView.webContents.isDestroyed()) {
     return;
   }
-  const debuggee = nativeBrowserView.webContents.debugger;
+  const debuggee = electronWebContents(nativeBrowserView).debugger;
   if (!debuggee.isAttached()) {
     debuggee.attach('1.3');
   }
@@ -742,24 +764,22 @@ async function applyNativeBrowserFingerprint(nativeBrowserView: BrowserView, pro
   }
 }
 
-function currentNativeBrowserView(): BrowserView | undefined {
-  const view = nativeBrowserController.currentView();
-  return view ? nativeBrowserViewFromPageView(view) : undefined;
+function currentNativeBrowserView(): NativeBrowserViewLike | undefined {
+  return nativeBrowserController.currentView();
 }
 
 function currentNativeBrowserHost(window = mainWindow): NativeBrowserHost | undefined {
   if (!window) {
     return undefined;
   }
-  return new BrowserViewPageHost(window);
+  return currentBrowserPageViewMode() === 'web-contents-view'
+    ? new WebContentsViewPageHost(window)
+    : new BrowserViewPageHost(window);
 }
 
-function nativeBrowserViewFromPageView(view: NativeBrowserViewLike): BrowserView {
-  return (view as BrowserViewPageView).nativeView as BrowserView;
-}
-
-function attachNativeBrowserProxyAuth(view: BrowserView | BrowserWindow, profile: BrowserProfile): void {
-  view.webContents.on(
+function attachNativeBrowserProxyAuth(view: NativeBrowserViewLike | BrowserWindow, profile: BrowserProfile): void {
+  const contents = view instanceof BrowserWindow ? view.webContents : electronWebContents(view);
+  contents.on(
     'login',
     (
       event: Event,

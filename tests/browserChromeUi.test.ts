@@ -89,6 +89,18 @@ describe('browser chrome UI', () => {
     expect(controllerSource).toContain('entry.view.setBounds(entry.bounds);');
   });
 
+  it('keeps BrowserView as the default while allowing WebContentsView through an explicit switch', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+
+    expect(mainSource).toContain('browserPageViewModeFromEnv(process.env)');
+    expect(mainSource).toContain('createNativeBrowserPageView');
+    expect(mainSource).toContain('currentNativeBrowserHost');
+    expect(mainSource).toContain('WebContentsViewPageHost');
+    expect(mainSource).toContain('BrowserViewPageHost');
+    expect(mainSource).toContain('new WebContentsView');
+    expect(mainSource).toContain('new BrowserView');
+  });
+
   it('fits wide native browser pages to the available width after load and resize', () => {
     const mainSource = readFileSync('electron/main.ts', 'utf8');
     const resizeHandler = mainSource.slice(
@@ -99,7 +111,7 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain('computeWidthFitZoom');
     expect(mainSource).toContain('fitNativeBrowserWidth');
     expect(mainSource).toContain('measurePageScript()');
-    expect(mainSource).toContain('view.webContents.on(\'did-finish-load\', () => scheduleNativeBrowserWidthFit())');
+    expect(mainSource).toContain('contents.on(\'did-finish-load\', () => scheduleNativeBrowserWidthFit())');
     expect(mainSource).toContain('scheduleNativeBrowserWidthFit();');
     expect(resizeHandler).toContain('scheduleNativeBrowserWidthFit()');
   });
@@ -120,9 +132,10 @@ describe('browser chrome UI', () => {
     );
 
     expect(mainSource).toContain('const nativeBrowserHandlerWebContents = new WeakSet<Electron.WebContents>();');
-    expect(attachHandler).toContain('if (nativeBrowserHandlerWebContents.has(view.webContents))');
-    expect(attachHandler).toContain('nativeBrowserHandlerWebContents.add(view.webContents);');
-    expect(mainSource).toContain('attachNativeBrowserTabHandlers(electronView);');
+    expect(attachHandler).toContain('const contents = electronWebContents(view);');
+    expect(attachHandler).toContain('if (nativeBrowserHandlerWebContents.has(contents))');
+    expect(attachHandler).toContain('nativeBrowserHandlerWebContents.add(contents);');
+    expect(mainSource).toContain('attachNativeBrowserTabHandlers(view);');
     expect(createViewHandler).toContain('nativeBrowserController.show');
     expect(disposeHandler).not.toContain('nativeBrowserHandlersAttached = false;');
   });
@@ -136,10 +149,10 @@ describe('browser chrome UI', () => {
 
     expect(mainSource).toContain("ipcMain.handle('native-browser:navigation-state'");
     expect(mainSource).toContain('nativeBrowserController.navigationStateForTab(tabId)');
-    expect(attachHandler).toContain("view.webContents.on('did-start-loading'");
-    expect(attachHandler).toContain("view.webContents.on('did-stop-loading'");
-    expect(attachHandler).toContain("view.webContents.on('did-fail-load'");
-    expect(attachHandler).toContain("view.webContents.on('render-process-gone'");
+    expect(attachHandler).toContain("contents.on('did-start-loading'");
+    expect(attachHandler).toContain("contents.on('did-stop-loading'");
+    expect(attachHandler).toContain("contents.on('did-fail-load'");
+    expect(attachHandler).toContain("contents.on('render-process-gone'");
     expect(attachHandler).toContain('updateNativeBrowserNavigationState(view');
   });
 
@@ -151,7 +164,7 @@ describe('browser chrome UI', () => {
     );
 
     expect(mainSource).toContain('navigationDecisionForUrl');
-    expect(attachHandler).toContain("view.webContents.on('will-navigate'");
+    expect(attachHandler).toContain("contents.on('will-navigate'");
     expect(attachHandler).toContain("return { action: 'deny' };");
   });
 
