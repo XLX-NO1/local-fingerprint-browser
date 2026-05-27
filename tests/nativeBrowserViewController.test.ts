@@ -161,6 +161,53 @@ describe('NativeBrowserViewController', () => {
     expect(controller.metadataForView(first)).toBeUndefined();
     expect(controller.metadataForView(second)).toEqual({ profileId: 'profile-b', tabId: 'tab-b' });
   });
+
+  it('tracks navigation state for each tab view', async () => {
+    const first = makeView('https://a.example/', 'A');
+    const second = makeView('https://b.example/', 'B');
+    first.webContents.canGoBack = vi.fn(() => true);
+    second.webContents.canGoForward = vi.fn(() => true);
+    const host = makeHost();
+    const controller = new NativeBrowserViewController({
+      createView: vi.fn()
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second),
+      prepareProfileSession: vi.fn(async () => undefined),
+      shouldRecreateView: vi.fn(() => false),
+      viewState: vi.fn((profile) => ({ profileId: profile.id, fingerprintId: profile.fingerprint.id, proxyIdentity: 'direct' })),
+      onViewCreated: vi.fn(async () => undefined),
+      toNativeBounds: vi.fn((input) => input),
+      isNavigationAbort: vi.fn(() => false),
+    });
+    const profile = makeProfile('profile-a');
+
+    await controller.show(host, profile, 'tab-a', 'https://a.example/', bounds());
+    await controller.show(host, profile, 'tab-b', 'https://b.example/', bounds());
+    controller.updateNavigationStateForView(first, { isLoading: true });
+    controller.updateNavigationStateForView(second, { crashed: true, lastError: 'render-process-gone: crashed' });
+
+    expect(controller.navigationStateForTab('tab-a')).toMatchObject({
+      tabId: 'tab-a',
+      profileId: 'profile-a',
+      url: 'https://a.example/',
+      title: 'A',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: true,
+      crashed: false,
+    });
+    expect(controller.navigationStateForTab('tab-b')).toMatchObject({
+      tabId: 'tab-b',
+      profileId: 'profile-a',
+      url: 'https://b.example/',
+      title: 'B',
+      canGoBack: false,
+      canGoForward: true,
+      isLoading: false,
+      crashed: true,
+      lastError: 'render-process-gone: crashed',
+    });
+  });
 });
 
 function makeController(view: NativeBrowserViewLike): NativeBrowserViewController {
@@ -182,11 +229,12 @@ function makeHost(): NativeBrowserHost {
   };
 }
 
-function makeView(url = 'about:blank'): NativeBrowserViewLike {
+function makeView(url = 'about:blank', title = ''): NativeBrowserViewLike {
   return {
     webContents: {
       isDestroyed: vi.fn(() => false),
       getURL: vi.fn(() => url),
+      getTitle: vi.fn(() => title),
       loadURL: vi.fn(async () => undefined),
       close: vi.fn(),
       setUserAgent: vi.fn(),

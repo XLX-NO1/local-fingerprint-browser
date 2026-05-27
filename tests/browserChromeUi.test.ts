@@ -100,7 +100,7 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain('fitNativeBrowserWidth');
     expect(mainSource).toContain('measurePageScript()');
     expect(mainSource).toContain('view.webContents.on(\'did-finish-load\', () => scheduleNativeBrowserWidthFit())');
-    expect(mainSource).toContain('view.webContents.on(\'did-stop-loading\', () => scheduleNativeBrowserWidthFit())');
+    expect(mainSource).toContain('scheduleNativeBrowserWidthFit();');
     expect(resizeHandler).toContain('scheduleNativeBrowserWidthFit()');
   });
 
@@ -125,6 +125,22 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain('attachNativeBrowserTabHandlers(electronView);');
     expect(createViewHandler).toContain('nativeBrowserController.show');
     expect(disposeHandler).not.toContain('nativeBrowserHandlersAttached = false;');
+  });
+
+  it('tracks native BrowserView navigation state in the main process', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const attachHandler = mainSource.slice(
+      mainSource.indexOf('function attachNativeBrowserTabHandlers'),
+      mainSource.indexOf('function disposeNativeBrowserView'),
+    );
+
+    expect(mainSource).toContain("ipcMain.handle('native-browser:navigation-state'");
+    expect(mainSource).toContain('nativeBrowserController.navigationStateForTab(tabId)');
+    expect(attachHandler).toContain("view.webContents.on('did-start-loading'");
+    expect(attachHandler).toContain("view.webContents.on('did-stop-loading'");
+    expect(attachHandler).toContain("view.webContents.on('did-fail-load'");
+    expect(attachHandler).toContain("view.webContents.on('render-process-gone'");
+    expect(attachHandler).toContain('updateNativeBrowserNavigationState(view');
   });
 
   it('does not explicitly close native BrowserView webContents during app quit', () => {
@@ -190,8 +206,12 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('goBackNativeBrowserView');
     expect(appSource).toContain('goForwardNativeBrowserView');
     expect(appSource).toContain('reloadNativeBrowserView');
+    expect(appSource).toContain('getNativeBrowserNavigationState');
+    expect(appSource).toContain('disabled={!navigationState?.canGoBack}');
+    expect(appSource).toContain('disabled={!navigationState?.canGoForward}');
     expect(appSource).not.toContain('<button type="button" disabled title="后退">');
     expect(appSource).not.toContain('<button type="button" disabled title="前进">');
+    expect(appSource).not.toContain('disabled={!selected?.lastOpenedUrl} onClick={() => void goBackNativeBrowserView()}');
   });
 
   it('does not overwrite the address bar while the user is editing it', () => {

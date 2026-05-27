@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { BrowserProfile, CreateProfileInput } from './types';
+import type { BrowserNavigationState, BrowserProfile, CreateProfileInput } from './types';
 import { formatProxyInput, parseProxyInput } from './proxyInput';
 import { filterProfiles, type ProfileGroupFilter } from './profileFilters';
 import { buildSelfTestChecklist } from './selfTestReport';
@@ -31,6 +31,7 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [activeGroup, setActiveGroup] = useState<ProfileGroupFilter>('ALL');
   const [openUrl, setOpenUrl] = useState('https://example.com');
+  const [navigationState, setNavigationState] = useState<BrowserNavigationState>();
   const [isEditingUrl, setIsEditingUrl] = useState(false);
   const [proxyFormUrl, setProxyFormUrl] = useState('');
   const [selectedRegion, setSelectedRegion] = useState(DEFAULT_REGION);
@@ -65,6 +66,7 @@ export default function App() {
   );
   const isSelfTestView = isFingerprintSelfTestUrl(selected?.lastOpenedUrl);
   const isModalOpen = isEditorOpen || isSettingsOpen || isProxyEditorOpen;
+  const selectedTabId = selected?.activeTabId ?? selected?.id;
   const groupCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const profile of profiles) {
@@ -89,6 +91,28 @@ export default function App() {
   }, [isEditingUrl, selected?.id, selected?.activeTabId, selected?.lastOpenedUrl, selected?.tabs]);
 
   useEffect(() => {
+    if (!selected?.id || !selectedTabId) {
+      setNavigationState(undefined);
+      return undefined;
+    }
+    let cancelled = false;
+    void window.api.getNativeBrowserNavigationState?.(selected.id, selectedTabId)
+      .then((state) => {
+        if (!cancelled) {
+          setNavigationState(state);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNavigationState(undefined);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id, selectedTabId, selected?.lastOpenedUrl, selected?.tabs]);
+
+  useEffect(() => {
     if (!isProxyEditorOpen) {
       return undefined;
     }
@@ -102,7 +126,7 @@ export default function App() {
   const syncNativeBrowserView = useCallback(() => {
     const frame = nativeBrowserFrameRef.current;
     const main = mainRef.current;
-    const tabId = selected?.activeTabId ?? selected?.id;
+    const tabId = selectedTabId;
     if (isSelfTestView || !frame || !main || !selected?.lastOpenedUrl || !tabId || isModalOpen) {
       void window.api.hideNativeBrowserView?.();
       return;
@@ -113,7 +137,7 @@ export default function App() {
     const bottom = Math.min(rect.bottom, mainRect.bottom);
     const bounds = { x: rect.left, y: rect.top, width: Math.max(0, right - rect.left), height: Math.max(0, bottom - rect.top) };
     void window.api.showNativeBrowserView?.(selected.id, tabId, selected.lastOpenedUrl, bounds);
-  }, [isModalOpen, isSelfTestView, selected?.activeTabId, selected?.id, selected?.lastOpenedUrl]);
+  }, [isModalOpen, isSelfTestView, selected?.id, selected?.lastOpenedUrl, selectedTabId]);
 
   const scheduleNativeBrowserViewSync = useCallback(() => {
     syncNativeBrowserView();
@@ -514,8 +538,8 @@ export default function App() {
 
       <main className="main" ref={mainRef}>
         <form className="browser-toolbar" onSubmit={(event) => { event.preventDefault(); if (selected) void openWebsite(selected); }}>
-          <button type="button" disabled={!selected?.lastOpenedUrl} onClick={() => void goBackNativeBrowserView()} title="后退">←</button>
-          <button type="button" disabled={!selected?.lastOpenedUrl} onClick={() => void goForwardNativeBrowserView()} title="前进">→</button>
+          <button type="button" disabled={!navigationState?.canGoBack} onClick={() => void goBackNativeBrowserView()} title="后退">←</button>
+          <button type="button" disabled={!navigationState?.canGoForward} onClick={() => void goForwardNativeBrowserView()} title="前进">→</button>
           <button type="button" disabled={!selected} onClick={() => selected && void reloadNativeBrowserView(selected)} title="刷新">↻</button>
           <label className="urlbar">
             <span>{selected ? selected.name : '$ open'}</span>

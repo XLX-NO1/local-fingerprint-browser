@@ -1,10 +1,11 @@
-import type { BrowserProfile } from '../../src/types';
+import type { BrowserNavigationState, BrowserProfile } from '../../src/types';
 import type { BrowserViewBounds } from '../../src/nativeBrowserView';
 import type { EmbeddedBrowserViewState } from './embeddedFingerprint';
 
 export interface NativeBrowserWebContentsLike {
   isDestroyed(): boolean;
   getURL(): string;
+  getTitle(): string;
   loadURL(url: string): Promise<void>;
   close(): void;
   setUserAgent(userAgent: string): void;
@@ -59,6 +60,11 @@ export class NativeBrowserViewController {
         this.disposeEntry(host, tabId, entry);
       }
       entry = await this.createEntry(profile);
+      entry.navigationState = {
+        ...entry.navigationState,
+        profileId: profile.id,
+        tabId,
+      };
       this.entries.set(tabId, entry);
     }
 
@@ -171,6 +177,39 @@ export class NativeBrowserViewController {
     return undefined;
   }
 
+  navigationStateForTab(tabId: string): BrowserNavigationState | undefined {
+    const entry = this.entries.get(tabId);
+    if (!entry) {
+      return undefined;
+    }
+    return { ...entry.navigationState };
+  }
+
+  currentNavigationState(): BrowserNavigationState | undefined {
+    const entry = this.currentEntry();
+    return entry ? { ...entry.navigationState } : undefined;
+  }
+
+  updateNavigationStateForView(view: NativeBrowserViewLike, patch: Partial<Omit<BrowserNavigationState, 'profileId' | 'tabId'>>): BrowserNavigationState | undefined {
+    for (const [tabId, entry] of this.entries) {
+      if (entry.view !== view) {
+        continue;
+      }
+      entry.navigationState = {
+        ...entry.navigationState,
+        url: patch.url ?? view.webContents.getURL(),
+        title: patch.title ?? view.webContents.getTitle(),
+        canGoBack: patch.canGoBack ?? view.webContents.canGoBack(),
+        canGoForward: patch.canGoForward ?? view.webContents.canGoForward(),
+        ...patch,
+        profileId: entry.profileId,
+        tabId,
+      };
+      return { ...entry.navigationState };
+    }
+    return undefined;
+  }
+
   private async createEntry(profile: BrowserProfile): Promise<NativeBrowserViewEntry> {
     const view = this.options.createView(profile);
     view.webContents.setUserAgent(profile.fingerprint.userAgent);
@@ -179,6 +218,7 @@ export class NativeBrowserViewController {
       view,
       profileId: profile.id,
       state: this.options.viewState(profile),
+      navigationState: this.navigationStateFromView(profile.id, '', view),
       attached: false,
     };
   }
@@ -199,12 +239,26 @@ export class NativeBrowserViewController {
   private currentEntry(): NativeBrowserViewEntry | undefined {
     return this.activeTabId ? this.entries.get(this.activeTabId) : undefined;
   }
+
+  private navigationStateFromView(profileId: string, tabId: string, view: NativeBrowserViewLike): BrowserNavigationState {
+    return {
+      profileId,
+      tabId,
+      url: view.webContents.getURL(),
+      title: view.webContents.getTitle(),
+      canGoBack: view.webContents.canGoBack(),
+      canGoForward: view.webContents.canGoForward(),
+      isLoading: false,
+      crashed: false,
+    };
+  }
 }
 
 type NativeBrowserViewEntry = {
   view: NativeBrowserViewLike;
   profileId: string;
   state: EmbeddedBrowserViewState;
+  navigationState: BrowserNavigationState;
   attached: boolean;
   bounds?: BrowserViewBounds;
 };

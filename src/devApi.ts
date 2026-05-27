@@ -180,6 +180,9 @@ export function installDevApi(): void {
     async showNativeBrowserView() {},
     async resizeNativeBrowserView() {},
     async hideNativeBrowserView() {},
+    async getNativeBrowserNavigationState() {
+      return undefined;
+    },
     async goBackNativeBrowserView() {},
     async goForwardNativeBrowserView() {},
     async reloadNativeBrowserView() {},

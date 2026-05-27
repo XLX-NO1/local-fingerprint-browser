@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppApi, AppSettings, BrowserProfile, CreateProfileInput, LaunchResult, UpdateProfileInput } from '../src/types';
+import type { AppApi, AppSettings, BrowserNavigationState, BrowserProfile, CreateProfileInput, LaunchResult, UpdateProfileInput } from '../src/types';
 
 const api: AppApi = {
   listProfiles: () => ipcRenderer.invoke('profiles:list') as Promise<BrowserProfile[]>,
@@ -19,6 +19,7 @@ const api: AppApi = {
   showNativeBrowserView: (profileId: string, tabId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('native-browser:show', profileId, tabId, url, bounds) as Promise<void>,
   resizeNativeBrowserView: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('native-browser:resize', bounds) as Promise<void>,
   hideNativeBrowserView: () => ipcRenderer.invoke('native-browser:hide') as Promise<void>,
+  getNativeBrowserNavigationState: (profileId: string, tabId: string) => ipcRenderer.invoke('native-browser:navigation-state', profileId, tabId) as Promise<BrowserNavigationState | undefined>,
   goBackNativeBrowserView: () => ipcRenderer.invoke('native-browser:go-back') as Promise<void>,
   goForwardNativeBrowserView: () => ipcRenderer.invoke('native-browser:go-forward') as Promise<void>,
   reloadNativeBrowserView: () => ipcRenderer.invoke('native-browser:reload') as Promise<void>,

@@ -44,13 +44,13 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 当前代码状态：
 
 - 当前分支：`codex/fingerprint-model-spec`
-- 最新提交：`3eca3c7 Release v1.0.5`
+- 最新提交：以 `git log --oneline -1` 为准
 - 工作区：提交后干净
 
 最近一次验证：
 
 - `npm run typecheck` 通过
-- `npm run test` 通过，32 个测试文件，152 个测试
+- `npm run test` 通过，32 个测试文件，154 个测试
 - `npm run build` 通过
 - Electron 已能打开本地软件窗口
 
@@ -142,7 +142,7 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 ## 当前已知问题和取舍
 
-- 后退/前进/刷新已接到当前 tab 的 BrowserView webContents。
+- 后退/前进/刷新已接到当前 tab 的 BrowserView webContents，按钮状态由主进程导航 runtime 控制。
 - 地址栏有编辑中状态，用户输入时不会被 profile refresh 覆盖。
 - 多 tab 已有独立 BrowserView 缓存，但仍未迁移到 Electron 推荐的 `WebContentsView`。
 - 当前弹窗仍需要 hide/show 原生 BrowserView，WebContentsView 迁移后再处理层级。
@@ -161,6 +161,8 @@ export const FIXED_BROWSER_ZOOM = 1;
 4. 最后把硬件指纹 v2 模型接入 runtime、自测和 UI，减少伪装值漂移。
 
 ### 下一阶段 1：导航状态和 tab runtime
+
+状态：已开始实现。`NativeBrowserViewController` 已保存每个 tab 的 `BrowserNavigationState`，主进程已监听加载、导航、失败、崩溃事件，前端后退/前进按钮已改为读取 `canGoBack/canGoForward`。
 
 目标：前端不再用 `selected?.lastOpenedUrl` 粗略判断按钮状态，而是由主进程返回当前 tab 的真实状态。
 

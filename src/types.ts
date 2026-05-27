@@ -72,6 +72,18 @@ export interface BrowserTab {
   updatedAt: string;
 }
 
+export interface BrowserNavigationState {
+  tabId: string;
+  profileId: string;
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  isLoading: boolean;
+  crashed: boolean;
+  lastError?: string;
+}
+
 export interface BrowserBookmark {
   id: string;
   title: string;
@@ -134,6 +146,7 @@ export interface AppApi {
   showNativeBrowserView(profileId: string, tabId: string, url: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
   resizeNativeBrowserView(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
   hideNativeBrowserView(): Promise<void>;
+  getNativeBrowserNavigationState(profileId: string, tabId: string): Promise<BrowserNavigationState | undefined>;
   goBackNativeBrowserView(): Promise<void>;
   goForwardNativeBrowserView(): Promise<void>;
   reloadNativeBrowserView(): Promise<void>;

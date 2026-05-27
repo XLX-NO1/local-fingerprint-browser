@@ -16,7 +16,7 @@ import { configureProfileSession } from './services/embeddedSession';
 import { NativeBrowserViewController, type NativeBrowserHost, type NativeBrowserViewLike } from './services/nativeBrowserViewController';
 import { prepareSelfTestPage } from './services/selfTestPage';
 import { buildNativeSelfTestCaptureScript, extractSelfTestReportFromExecutionResult, summarizeSelfTestReport } from './services/selfTestResult';
-import type { AppSettings, BrowserProfile, CreateProfileInput, UpdateProfileInput } from '../src/types';
+import type { AppSettings, BrowserNavigationState, BrowserProfile, CreateProfileInput, UpdateProfileInput } from '../src/types';
 import { normalizeOpenUrl } from '../src/urlInput';
 import {
   activateTabInProfile,
@@ -201,6 +201,13 @@ function scheduleNativeBrowserMetadataUpdate(view: BrowserView, url?: string): v
   }, 120);
 }
 
+function updateNativeBrowserNavigationState(view: BrowserView, patch: Partial<Omit<BrowserNavigationState, 'profileId' | 'tabId'>> = {}): void {
+  const state = nativeBrowserController.updateNavigationStateForView(view, patch);
+  if (state) {
+    notifyProfilesChanged();
+  }
+}
+
 async function updateNativeBrowserTabMetadata(nativeBrowserView: BrowserView, url?: string): Promise<void> {
   const metadata = nativeBrowserController.metadataForView(nativeBrowserView);
   if (!metadata || nativeBrowserView.webContents.isDestroyed()) {
@@ -212,6 +219,10 @@ async function updateNativeBrowserTabMetadata(nativeBrowserView: BrowserView, ur
   }
   const profile = await store.get(metadata.profileId);
   const updated = updateTabMetadataInProfile(profile, metadata.tabId, {
+    url: nextUrl,
+    title: nativeBrowserView.webContents.getTitle(),
+  });
+  nativeBrowserController.updateNavigationStateForView(nativeBrowserView, {
     url: nextUrl,
     title: nativeBrowserView.webContents.getTitle(),
   });
@@ -251,11 +262,37 @@ function attachNativeBrowserTabHandlers(view: BrowserView): void {
   });
   view.webContents.on('dom-ready', resetNativeBrowserZoom);
   view.webContents.on('dom-ready', () => scheduleNativeBrowserWidthFit(80));
+  view.webContents.on('did-start-loading', () => updateNativeBrowserNavigationState(view, { isLoading: true, crashed: false, lastError: undefined }));
   view.webContents.on('did-finish-load', () => scheduleNativeBrowserWidthFit());
-  view.webContents.on('did-stop-loading', () => scheduleNativeBrowserWidthFit());
-  view.webContents.on('did-navigate', (_event, url) => scheduleNativeBrowserMetadataUpdate(view, url));
-  view.webContents.on('did-navigate-in-page', (_event, url) => scheduleNativeBrowserMetadataUpdate(view, url));
-  view.webContents.on('page-title-updated', () => scheduleNativeBrowserMetadataUpdate(view));
+  view.webContents.on('did-stop-loading', () => {
+    updateNativeBrowserNavigationState(view, { isLoading: false });
+    scheduleNativeBrowserWidthFit();
+  });
+  view.webContents.on('did-navigate', (_event, url) => {
+    updateNativeBrowserNavigationState(view, { url, isLoading: false, crashed: false, lastError: undefined });
+    scheduleNativeBrowserMetadataUpdate(view, url);
+  });
+  view.webContents.on('did-navigate-in-page', (_event, url) => {
+    updateNativeBrowserNavigationState(view, { url });
+    scheduleNativeBrowserMetadataUpdate(view, url);
+  });
+  view.webContents.on('page-title-updated', () => {
+    updateNativeBrowserNavigationState(view, { title: view.webContents.getTitle() });
+    scheduleNativeBrowserMetadataUpdate(view);
+  });
+  view.webContents.on('did-fail-load', (_event, _errorCode, errorDescription, validatedURL) => {
+    updateNativeBrowserNavigationState(view, {
+      isLoading: false,
+      lastError: `${errorDescription}${validatedURL ? `: ${validatedURL}` : ''}`,
+    });
+  });
+  view.webContents.on('render-process-gone', (_event, details) => {
+    updateNativeBrowserNavigationState(view, {
+      isLoading: false,
+      crashed: true,
+      lastError: `render-process-gone: ${details.reason}`,
+    });
+  });
   view.webContents.on('did-finish-load', () => {
     void captureNativeSelfTestResult().catch(() => undefined);
   });
@@ -543,6 +580,10 @@ function registerIpc(): void {
     if (host) {
       nativeBrowserController.hide(host);
     }
+  });
+  ipcMain.handle('native-browser:navigation-state', (_event, profileId: string, tabId: string) => {
+    const state = nativeBrowserController.navigationStateForTab(tabId);
+    return state?.profileId === profileId ? state : undefined;
   });
   ipcMain.handle('native-browser:go-back', () => {
     nativeBrowserController.goBack();
