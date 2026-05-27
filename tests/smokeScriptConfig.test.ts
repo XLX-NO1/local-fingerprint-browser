@@ -8,4 +8,20 @@ describe('launch smoke script config', () => {
     expect(pkg.scripts?.['smoke:launch']).toBe('npm run build:electron && node dist-electron/scripts/launchSmoke.js');
     await expect(access('scripts/launchSmoke.ts')).resolves.toBeUndefined();
   });
+
+  it('defines a browser smoke script for BrowserView and WebContentsView paths', async () => {
+    const pkg = JSON.parse(await readFile('package.json', 'utf8')) as { scripts?: Record<string, string> };
+    const mainSource = await readFile('electron/main.ts', 'utf8');
+    const smokeSource = await readFile('scripts/browserSmoke.ts', 'utf8');
+
+    expect(pkg.scripts?.['smoke:browser']).toBe('npm run build && node dist-electron/scripts/browserSmoke.js');
+    await expect(access('scripts/browserSmoke.ts')).resolves.toBeUndefined();
+    expect(smokeSource).toContain('USE_WEB_CONTENTS_VIEW');
+    expect(smokeSource).toContain('ELECTRON_BROWSER_SMOKE');
+    expect(smokeSource).toContain('browser-view');
+    expect(smokeSource).toContain('web-contents-view');
+    expect(mainSource).toContain('runElectronBrowserSmoke');
+    expect(mainSource).toContain('process.env.ELECTRON_BROWSER_SMOKE');
+    expect(mainSource).toContain('ELECTRON_BROWSER_SMOKE_RESULT');
+  });
 });

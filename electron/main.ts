@@ -50,6 +50,9 @@ const hiddenSelfTestWindows = new Set<BrowserWindow>();
 const downloadController = new DownloadController();
 const downloadSessionPartitions = new Set<string>();
 const browserPageViewMode = browserPageViewModeFromEnv(process.env);
+if (process.env.ELECTRON_BROWSER_SMOKE_USER_DATA_DIR) {
+  app.setPath('userData', process.env.ELECTRON_BROWSER_SMOKE_USER_DATA_DIR);
+}
 const nativeBrowserController = new NativeBrowserViewController({
   createView: createNativeBrowserPageView,
   prepareProfileSession: configureEmbeddedSession,
@@ -58,7 +61,7 @@ const nativeBrowserController = new NativeBrowserViewController({
   onViewCreated: async (view, profile) => {
     attachNativeBrowserProxyAuth(view, profile);
     attachNativeBrowserTabHandlers(view);
-    await applyNativeBrowserFingerprint(view, profile);
+    await applyNativeBrowserFingerprintWithTimeout(view, profile);
   },
   toNativeBounds: cssRectToBrowserViewBounds,
   isNavigationAbort,
@@ -113,7 +116,9 @@ function createWindow(): void {
     }
   });
 
-  if (isDev && process.env.VITE_DEV_SERVER_URL) {
+  if (process.env.ELECTRON_BROWSER_SMOKE === '1') {
+    void mainWindow.loadURL('about:blank');
+  } else if (isDev && process.env.VITE_DEV_SERVER_URL) {
     void mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
     void mainWindow.loadFile(join(__dirname, '../../dist/index.html'));
@@ -481,6 +486,153 @@ async function loadUrlWithTimeout(window: BrowserWindow, url: string, timeoutMs:
   ]);
 }
 
+async function runElectronBrowserSmoke(): Promise<Record<string, unknown>> {
+  const smokeUrl = process.env.ELECTRON_BROWSER_SMOKE_URL;
+  if (!smokeUrl) {
+    throw new Error('ELECTRON_BROWSER_SMOKE_URL is required.');
+  }
+  if (!mainWindow) {
+    throw new Error('Main window is not ready for browser smoke.');
+  }
+  console.log(`ELECTRON_BROWSER_SMOKE_STEP start ${currentBrowserPageViewMode()}`);
+  mainWindow.show();
+  mainWindow.focus();
+  await delay(500);
+  const profile = await store.create({
+    name: `Smoke ${currentBrowserPageViewMode()}`,
+    group: 'Smoke',
+    notes: 'Electron browser smoke profile',
+  });
+  const workspace = createBlankTab(profile, smokeUrl);
+  let currentProfile = await store.update(profile.id, {
+    tabs: workspace.tabs,
+    activeTabId: workspace.activeTabId,
+    lastOpenedUrl: workspace.lastOpenedUrl,
+  });
+  const tabId = currentProfile.activeTabId;
+  if (!tabId) {
+    throw new Error('Smoke profile did not create an active tab.');
+  }
+  const host = currentNativeBrowserHost(mainWindow);
+  if (!host) {
+    throw new Error('Smoke native browser host is unavailable.');
+  }
+  console.log('ELECTRON_BROWSER_SMOKE_STEP open landing');
+  startNativeBrowserShowForSmoke(host, currentProfile, tabId, smokeUrl, {
+    x: 0,
+    y: 0,
+    width: 900,
+    height: 620,
+  });
+  await waitForCurrentNativeUrl(smokeUrl, 8000);
+  const landingTitle = electronWebContents(nativeBrowserController.currentView() as NativeBrowserViewLike).getTitle();
+
+  console.log('ELECTRON_BROWSER_SMOKE_STEP target blank');
+  await executeCurrentNativeJavaScript("document.querySelector('[data-smoke-target-blank]')?.click()");
+  currentProfile = await waitForProfileTabCount(profile.id, 2, 5000);
+  const popupOpenedInInternalTab = (currentProfile.tabs ?? []).some((tab) => tab.url.includes('/popup'));
+
+  console.log('ELECTRON_BROWSER_SMOKE_STEP download');
+  startNativeBrowserShowForSmoke(host, currentProfile, tabId, smokeUrl, {
+    x: 0,
+    y: 0,
+    width: 900,
+    height: 620,
+  });
+  await waitForCurrentNativeUrl(smokeUrl, 8000);
+  await executeCurrentNativeJavaScript("document.querySelector('[data-smoke-download]')?.click()");
+  const download = await waitForProfileDownload(profile.id, 5000);
+
+  console.log('ELECTRON_BROWSER_SMOKE_STEP self-test');
+  const selfTestPage = await prepareSelfTestPage(currentProfile);
+  startNativeBrowserShowForSmoke(host, currentProfile, tabId, selfTestPage.fileUrl, {
+    x: 0,
+    y: 0,
+    width: 900,
+    height: 620,
+  });
+  await waitForCurrentNativeUrl(selfTestPage.fileUrl, 8000);
+
+  return {
+    mode: currentBrowserPageViewMode(),
+    landingTitle,
+    openedUrl: smokeUrl,
+    popupOpenedInInternalTab,
+    tabCount: currentProfile.tabs?.length ?? 0,
+    downloadStatus: download.status,
+    downloadFilename: download.filename,
+    selfTestOpened: true,
+  };
+}
+
+async function executeCurrentNativeJavaScript(script: string): Promise<unknown> {
+  const view = currentNativeBrowserView();
+  if (!view || view.webContents.isDestroyed()) {
+    throw new Error('No active native browser view for smoke script.');
+  }
+  return electronWebContents(view).executeJavaScript(script, true);
+}
+
+function startNativeBrowserShowForSmoke(host: NativeBrowserHost, profile: BrowserProfile, tabId: string, url: string, bounds: BrowserViewBounds): void {
+  void nativeBrowserController.show(host, profile, tabId, url, bounds).catch((error: unknown) => {
+    if (!isNavigationAbort(error)) {
+      console.error(`ELECTRON_BROWSER_SMOKE_SHOW_ERROR ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+}
+
+async function waitForCurrentNativeUrl(expectedUrl: string, timeoutMs: number): Promise<void> {
+  const startedAt = Date.now();
+  let lastUrl = '';
+  while (Date.now() - startedAt < timeoutMs) {
+    const view = currentNativeBrowserView();
+    const url = view && !view.webContents.isDestroyed() ? view.webContents.getURL() : '';
+    lastUrl = url;
+    if (url === expectedUrl) {
+      return;
+    }
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting for native browser URL ${expectedUrl}; last URL was ${lastUrl || 'none'}.`);
+}
+
+async function waitForProfileTabCount(profileId: string, count: number, timeoutMs: number): Promise<BrowserProfile> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const profile = await store.get(profileId);
+    if ((profile.tabs ?? []).length >= count) {
+      return profile;
+    }
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting for ${count} smoke tabs.`);
+}
+
+async function waitForProfileDownload(profileId: string, timeoutMs: number) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const [download] = downloadController.list(profileId);
+    if (download && download.status !== 'progressing') {
+      return download;
+    }
+    await delay(100);
+  }
+  throw new Error('Timed out waiting for smoke download.');
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) => {
+      setTimeout(() => reject(new Error(`Timed out during ${label}.`)), timeoutMs);
+    }),
+  ]);
+}
+
 function registerIpc(): void {
   ipcMain.handle('profiles:list', () => store.list());
   ipcMain.handle('profiles:create', (_event, input: CreateProfileInput) => store.create(input));
@@ -704,11 +856,17 @@ function registerIpc(): void {
 }
 
 async function configureEmbeddedSession(profile: BrowserProfile): Promise<void> {
+  if (process.env.ELECTRON_BROWSER_SMOKE === '1') {
+    console.log('ELECTRON_BROWSER_SMOKE_STEP configure session');
+  }
   const partition = `persist:profile-${profile.id}`;
   const profileSession = session.fromPartition(partition);
   await writeEmbeddedFingerprintPreload(profile);
   await configureProfileSession(profileSession, profile);
   attachProfileDownloadHandlers(profileSession, profile.id, partition);
+  if (process.env.ELECTRON_BROWSER_SMOKE === '1') {
+    console.log('ELECTRON_BROWSER_SMOKE_STEP configured session');
+  }
 }
 
 function attachProfileDownloadHandlers(profileSession: Session, profileId: string, partition: string): void {
@@ -761,6 +919,14 @@ async function applyNativeBrowserFingerprint(nativeBrowserView: NativeBrowserVie
   }
   for (const command of buildEmbeddedCdpSetupCommands(profile)) {
     await debuggee.sendCommand(command.method, command.params);
+  }
+}
+
+async function applyNativeBrowserFingerprintWithTimeout(nativeBrowserView: NativeBrowserViewLike, profile: BrowserProfile): Promise<void> {
+  try {
+    await withTimeout(applyNativeBrowserFingerprint(nativeBrowserView, profile), 3000, 'apply native browser fingerprint');
+  } catch (error) {
+    console.error(`cdp degraded for ${profile.id}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -821,6 +987,21 @@ app.whenReady().then(async () => {
   registerIpc();
   createTray();
   createWindow();
+  if (process.env.ELECTRON_BROWSER_SMOKE === '1') {
+    mainWindow?.webContents.once('did-finish-load', () => {
+      void runElectronBrowserSmoke()
+        .then((result) => {
+          console.log(`ELECTRON_BROWSER_SMOKE_RESULT ${JSON.stringify(result)}`);
+          isQuitting = true;
+          app.quit();
+        })
+        .catch((error: unknown) => {
+          console.error(`ELECTRON_BROWSER_SMOKE_ERROR ${error instanceof Error ? error.message : String(error)}`);
+          isQuitting = true;
+          app.exit(1);
+        });
+    });
+  }
 
   app.on('activate', () => {
     showMainWindow();

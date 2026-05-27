@@ -9,15 +9,15 @@
 - 内嵌网页已走 Electron 原生 BrowserView 控制器，按 profile/tab 管理实例。
 - 多环境、代理、标签、收藏、历史、下载、权限策略、证书策略、外部协议拦截、崩溃状态已经有核心链路。
 - 硬件指纹 v2 模型已经落到 `electron/services/fingerprint/model.ts`，并通过 `fingerprintRuntime` 接入 CDP/Accept-Language/UA metadata。
-- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 已有实验开关，但真实端到端冒烟仍需要补。
+- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 已有实验开关，浏览器级冒烟已覆盖双路径，下载文件操作和用户可调 zoom 仍需要补。
 
-当前推荐下一步：补浏览器级端到端冒烟，覆盖 BrowserView 默认路径和 `USE_WEB_CONTENTS_VIEW=1` 实验路径。
+当前推荐下一步：完善下载文件操作，增加打开文件或显示到文件夹的安全入口。
 
 ## 基本信息
 
 - 工作目录：`/Users/suweichao/项目/指纹浏览器`
 - 当前分支：`codex/fingerprint-model-spec`
-- 当前版本：`package.json` 为 `1.0.11`
+- 当前版本：`package.json` 为 `1.0.12`
 - 最新提交：以 `git log --oneline -1` 为准
 - 语言：和用户沟通用中文
 - UI 方向：保持终端像素风，但交互要像正常浏览器
@@ -40,11 +40,12 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 
 ## 最近验证基线
 
-截至 `Release v1.0.11`：
+截至 `Release v1.0.12`：
 
-- `npm run test` 通过：37 个测试文件，176 个测试
+- `npm run test` 通过：37 个测试文件，177 个测试
 - `npm run build` 通过
 - `npm run typecheck` 通过
+- `npm run smoke:browser` 通过，覆盖 BrowserView 与 WebContentsView
 
 提交或宣布完成前必须重新跑：
 
@@ -109,6 +110,17 @@ npm run build
 - 设置 `USE_WEB_CONTENTS_VIEW=1` 或 `USE_WEB_CONTENTS_VIEW=true` 时使用 `WebContentsView`
 - 主进程会按当前模式选择 `BrowserViewPageHost` 或 `WebContentsViewPageHost`
 - native browser 事件处理改为绑定统一 page view adapter，避免 view adapter 与原生 view 对象不一致导致 tab metadata 无法回写
+
+### v1.0.12
+
+完成浏览器级 Electron 冒烟。
+
+- 新增 `scripts/browserSmoke.ts`
+- 新增 `npm run smoke:browser`
+- 冒烟脚本启动本地 HTTP 服务器，并分别跑默认 BrowserView 与 `USE_WEB_CONTENTS_VIEW=1`
+- 主进程新增 `ELECTRON_BROWSER_SMOKE=1` 自测模式
+- 冒烟覆盖打开普通页面、target blank 转内部 tab、下载完成、本地自测页打开
+- CDP 指纹注入增加超时降级，避免注入卡住导致网页无法打开
 
 ## 核心目录
 
@@ -214,33 +226,37 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 ## 现在最应该做的事
 
-### 1. 浏览器级端到端冒烟
+### 1. 下载文件操作
 
-原因：目前测试以单元和源码约束为主，缺少真实 Electron 行为冒烟。
+原因：下载列表已经可见、可取消，但用户还不能从 UI 直接打开文件或显示到文件夹。
 
-建议脚本：
+建议改动：
 
-- 启动 Vite dev server
-- 启动 Electron
-- 创建 profile
-- 打开本地自测页
-- 打开普通 http 页面
-- 点击 target blank 链接，确认进入内部 tab
-- 触发下载，确认下载记录出现
+- `electron/main.ts`
+  - 增加 `downloads:show-in-folder` 或 `downloads:open-file` IPC
+  - 使用 Electron `shell.showItemInFolder`，默认优先显示到文件夹，不自动执行未知文件
+- `electron/preload.ts`
+  - 暴露对应 API
+- `src/types.ts`
+  - 扩展 `AppApi`
+- `src/App.tsx`
+  - 下载完成后显示“定位”按钮
+- `tests/downloadController.test.ts` / `tests/browserChromeUi.test.ts`
+  - 补源码和控制器测试
 
-可选位置：
+验收标准：
 
-- `scripts/smoke-electron.mjs`
-- 或扩展现有 `smoke` 相关测试/脚本
+- 只有 completed/interrupted/cancelled 等非 progressing 记录显示定位入口
+- 点击定位不会执行下载文件
+- 下载记录缺少路径时 UI 不报错
 
 ## 中期路线
 
-1. 为 BrowserView 默认路径和 WebContentsView 实验路径补浏览器冒烟。
-2. 下载增加打开文件/显示文件夹/失败原因展示。
-3. profile 设置中增加浏览器 zoom 选项，不恢复动态整页缩放。
-4. 代理失败和证书失败在 UI 中做更明确的错误入口。
-5. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
-6. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
+1. 下载增加打开文件/显示文件夹/失败原因展示。
+2. profile 设置中增加浏览器 zoom 选项，不恢复动态整页缩放。
+3. 代理失败和证书失败在 UI 中做更明确的错误入口。
+4. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
+5. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
 
 ## 开发规则
 
@@ -257,8 +273,8 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 后续从这里继续时，推荐按下面顺序提交：
 
-1. `Add Electron browser smoke test`
-2. `Improve download file actions`
+1. `Improve download file actions`
+2. `Add browser zoom setting`
 
 ## 快速接手命令
 
@@ -270,10 +286,10 @@ npm run test
 npm run build
 ```
 
-如果只做当前下一步的浏览器冒烟，先跑相关测试：
+如果只做当前下一步的下载文件操作，先跑相关测试：
 
 ```bash
-npm run test -- tests/browserChromeUi.test.ts tests/browserPageViewAdapter.test.ts
+npm run test -- tests/downloadController.test.ts tests/browserChromeUi.test.ts
 ```
 
 ## 用户明确要求
