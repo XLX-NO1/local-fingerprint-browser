@@ -131,7 +131,7 @@ export interface AppApi {
   closeProfileTab(id: string, tabId: string): Promise<BrowserProfile>;
   toggleProfileBookmark(id: string): Promise<BrowserProfile>;
   fitEmbeddedWebview(webContentsId: number, viewport: { width: number; height: number }): Promise<number>;
-  showNativeBrowserView(profileId: string, url: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+  showNativeBrowserView(profileId: string, tabId: string, url: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
   resizeNativeBrowserView(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
   hideNativeBrowserView(): Promise<void>;
   goBackNativeBrowserView(): Promise<void>;

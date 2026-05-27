@@ -8,6 +8,7 @@ import {
   openUrlInNewTab,
   toggleBookmarkInProfile,
   updateActiveTabMetadata,
+  updateTabMetadataInProfile,
 } from '../src/browserWorkspace';
 
 describe('browser workspace model', () => {
@@ -76,6 +77,25 @@ describe('browser workspace model', () => {
     expect(updated.tabs).toHaveLength(1);
     expect(updated.lastOpenedUrl).toBe('https://example.com/docs');
     expect(updated.tabs?.[0]).toMatchObject({ title: 'Docs', url: 'https://example.com/docs' });
+  });
+
+  it('updates hidden tab metadata without changing the active tab', () => {
+    const first = createBlankTab(makeProfile(), 'first.example');
+    const second = createBlankTab(first, 'second.example');
+    const firstTabId = first.activeTabId!;
+    const secondTabId = second.activeTabId!;
+
+    const updated = updateTabMetadataInProfile(second, firstTabId, {
+      url: 'https://first.example/redirected',
+      title: 'Redirected',
+    });
+
+    expect(updated.activeTabId).toBe(secondTabId);
+    expect(updated.lastOpenedUrl).toBe('https://second.example/');
+    expect(updated.tabs?.find((tab) => tab.id === firstTabId)).toMatchObject({
+      url: 'https://first.example/redirected',
+      title: 'Redirected',
+    });
   });
 
   it('opens the local fingerprint self-test page in the active tab', () => {

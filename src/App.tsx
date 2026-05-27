@@ -102,7 +102,8 @@ export default function App() {
   const syncNativeBrowserView = useCallback(() => {
     const frame = nativeBrowserFrameRef.current;
     const main = mainRef.current;
-    if (isSelfTestView || !frame || !main || !selected?.lastOpenedUrl || isModalOpen) {
+    const tabId = selected?.activeTabId ?? selected?.id;
+    if (isSelfTestView || !frame || !main || !selected?.lastOpenedUrl || !tabId || isModalOpen) {
       void window.api.hideNativeBrowserView?.();
       return;
     }
@@ -111,8 +112,8 @@ export default function App() {
     const right = Math.min(rect.right, mainRect.right);
     const bottom = Math.min(rect.bottom, mainRect.bottom);
     const bounds = { x: rect.left, y: rect.top, width: Math.max(0, right - rect.left), height: Math.max(0, bottom - rect.top) };
-    void window.api.showNativeBrowserView?.(selected.id, selected.lastOpenedUrl, bounds);
-  }, [isModalOpen, isSelfTestView, selected?.id, selected?.lastOpenedUrl]);
+    void window.api.showNativeBrowserView?.(selected.id, tabId, selected.lastOpenedUrl, bounds);
+  }, [isModalOpen, isSelfTestView, selected?.activeTabId, selected?.id, selected?.lastOpenedUrl]);
 
   const scheduleNativeBrowserViewSync = useCallback(() => {
     syncNativeBrowserView();

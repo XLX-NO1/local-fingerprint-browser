@@ -77,6 +77,26 @@ export function updateActiveTabMetadata(profile: BrowserProfile, input: { url?: 
   };
 }
 
+export function updateTabMetadataInProfile(profile: BrowserProfile, tabId: string, input: { url?: string; title?: string }): BrowserProfile {
+  const tab = (profile.tabs ?? []).find((item) => item.id === tabId);
+  if (!tab) {
+    return profile;
+  }
+  const normalizedUrl = input.url ? normalizeOpenUrl(input.url) : tab.url;
+  const updatedTab: BrowserTab = {
+    ...tab,
+    url: normalizedUrl,
+    title: input.title || tab.title || titleFromUrl(normalizedUrl),
+    updatedAt: new Date().toISOString(),
+  };
+  const isActive = profile.activeTabId === tabId;
+  return {
+    ...profile,
+    tabs: (profile.tabs ?? []).map((item) => (item.id === tabId ? updatedTab : item)),
+    lastOpenedUrl: isActive ? normalizedUrl : profile.lastOpenedUrl,
+  };
+}
+
 export function closeTabInProfile(profile: BrowserProfile, tabId: string): BrowserProfile {
   const tabs = (profile.tabs ?? []).filter((tab) => tab.id !== tabId);
   const activeTab = tabs.at(-1);

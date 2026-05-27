@@ -59,7 +59,7 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('SelfTestReportView');
     expect(syncHandler).toContain('isSelfTestView');
     expect(syncHandler).toContain('hideNativeBrowserView');
-    expect(syncHandler.indexOf('if (isSelfTestView')).toBeLessThan(syncHandler.indexOf('showNativeBrowserView?.(selected.id, selected.lastOpenedUrl'));
+    expect(syncHandler.indexOf('if (isSelfTestView')).toBeLessThan(syncHandler.indexOf('showNativeBrowserView?.(selected.id, tabId, selected.lastOpenedUrl'));
     expect(browserPanel).toContain('SelfTestReportView');
   });
 
@@ -80,9 +80,13 @@ describe('browser chrome UI', () => {
       mainSource.indexOf("ipcMain.handle('native-browser:resize'"),
     );
 
-    expect(showHandler).toContain('nativeBrowserBounds = cssRectToBrowserViewBounds(bounds);');
+    expect(showHandler).toContain('const host = currentNativeBrowserHost(mainWindow);');
+    expect(showHandler).toContain('nativeBrowserController.show(host, profile, tabId, url, bounds);');
     expect(showHandler).not.toContain('clampBrowserViewBoundsToWindow');
-    expect(showHandler.indexOf('mainWindow.addBrowserView(nativeBrowserView);')).toBeLessThan(showHandler.indexOf('nativeBrowserView.setBounds(nativeBrowserBounds);'));
+    const controllerSource = readFileSync('electron/services/nativeBrowserViewController.ts', 'utf8');
+    expect(controllerSource.indexOf('host.addBrowserView(entry.view);')).toBeGreaterThan(-1);
+    expect(controllerSource.indexOf('host.addBrowserView(entry.view);')).toBeLessThan(controllerSource.indexOf('this.resize(bounds);'));
+    expect(controllerSource).toContain('entry.view.setBounds(entry.bounds);');
   });
 
   it('fits wide native browser pages to the available width after load and resize', () => {
@@ -118,7 +122,8 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain('const nativeBrowserHandlerWebContents = new WeakSet<Electron.WebContents>();');
     expect(attachHandler).toContain('if (nativeBrowserHandlerWebContents.has(view.webContents))');
     expect(attachHandler).toContain('nativeBrowserHandlerWebContents.add(view.webContents);');
-    expect(createViewHandler).toContain('attachNativeBrowserTabHandlers(nativeBrowserView);');
+    expect(mainSource).toContain('attachNativeBrowserTabHandlers(electronView);');
+    expect(createViewHandler).toContain('nativeBrowserController.show');
     expect(disposeHandler).not.toContain('nativeBrowserHandlersAttached = false;');
   });
 

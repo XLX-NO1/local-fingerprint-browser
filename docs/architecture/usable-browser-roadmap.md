@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-27
 
-**Status:** Draft for implementation.
+**Status:** In implementation.
 
 **Purpose:** Define how the project moves from a profile-based web container to a browser that is reliable enough for daily multi-profile use.
 
@@ -35,15 +35,17 @@ The app already provides:
 - embedded native BrowserView browsing
 - external Chromium launch
 - tab metadata in the data model
+- main-process native BrowserView controller
+- one cached BrowserView per active tab runtime
 - self-test generation and capture
 - basic back, forward, reload IPC handlers
 
 Known limitations:
 
 - `BrowserView` is deprecated in modern Electron and should be replaced by `WebContentsView`.
-- The app currently uses one native page view and swaps URLs rather than keeping one live webContents per tab.
+- The app still uses deprecated `BrowserView`; a controller boundary now keeps per-tab views and prepares for a `WebContentsView` adapter.
 - BrowserView can cover React modals, forcing hide/show workarounds.
-- Tab history, scroll position, process state, and per-tab webContents lifecycle are not preserved.
+- Tab history, scroll position, and process state are preserved for cached tab views, but lifecycle is not yet a full browser engine with suspension/recovery.
 - Downloads, popups, certificate errors, permission prompts, context menu, and crash recovery are not yet browser-grade.
 
 ## Architecture Direction
@@ -282,12 +284,16 @@ Self-test should feed this model, but external IP API failures should not automa
 - Preserve existing behavior.
 - Add tests for view recreation when profile, fingerprint, or proxy identity changes.
 
+Status: implemented in `electron/services/nativeBrowserViewController.ts`; controller tests cover create/attach/resize/load, profile identity recreation, tab switching, closed tab disposal, and view metadata lookup.
+
 ### Milestone 2: Real Tab Runtime
 
 - Add main-process tab runtime state.
 - Keep one webContents per active tab.
 - Update metadata from webContents events.
 - Preserve tab state when switching tabs.
+
+Status: partially implemented for cached BrowserView tabs. Remaining work: expose navigation state to the renderer, handle suspended tabs, and add crash/error state.
 
 ### Milestone 3: WebContentsView Migration
 
@@ -345,4 +351,3 @@ Self-test should feed this model, but external IP API failures should not automa
 - Avoid storing Electron objects directly in persisted profile records.
 - Treat `webContentsId` as runtime state only.
 - Add small controller modules instead of growing `electron/main.ts`.
-
