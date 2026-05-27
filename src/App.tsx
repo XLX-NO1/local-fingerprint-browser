@@ -15,6 +15,13 @@ const DEFAULT_PROFILE_COLOR = PROFILE_COLORS[0];
 const DEFAULT_REGION = 'US';
 const DEFAULT_CREATE_FINGERPRINT = generateFingerprintForRegion(DEFAULT_REGION, 'create-profile-default');
 const DEFAULT_FORM_FINGERPRINT = fingerprintToForm(DEFAULT_CREATE_FINGERPRINT);
+const BROWSER_ZOOM_OPTIONS = [
+  { label: '80%', value: 0.8 },
+  { label: '90%', value: 0.9 },
+  { label: '100%', value: 1 },
+  { label: '110%', value: 1.1 },
+  { label: '125%', value: 1.25 },
+];
 
 export default function App() {
   const [profiles, setProfiles] = useState<BrowserProfile[]>([]);
@@ -28,6 +35,7 @@ export default function App() {
   const [proxyEditingProfile, setProxyEditingProfile] = useState<BrowserProfile>();
   const [chromiumPath, setChromiumPath] = useState('');
   const [detectedChromiumPath, setDetectedChromiumPath] = useState('');
+  const [browserZoomFactor, setBrowserZoomFactor] = useState(1);
   const [query, setQuery] = useState('');
   const [activeGroup, setActiveGroup] = useState<ProfileGroupFilter>('ALL');
   const [openUrl, setOpenUrl] = useState('https://example.com');
@@ -203,6 +211,7 @@ export default function App() {
     const settings = await window.api.getSettings();
     setChromiumPath(settings.chromiumPath ?? '');
     setDetectedChromiumPath(settings.detectedChromiumPath ?? '');
+    setBrowserZoomFactor(settings.browserZoomFactor ?? 1);
   }
 
   async function refreshProfiles() {
@@ -299,7 +308,7 @@ export default function App() {
 
   async function saveSettings() {
     try {
-      await window.api.updateSettings({ chromiumPath: chromiumPath.trim() || undefined });
+      await window.api.updateSettings({ chromiumPath: chromiumPath.trim() || undefined, browserZoomFactor });
       setError(undefined);
     } catch (caught) {
       setError(toMessage(caught));
@@ -740,6 +749,14 @@ export default function App() {
             <label>
               Chrome / Chromium 路径
               <input className="path-input" placeholder="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" value={chromiumPath} onChange={(event) => setChromiumPath(event.target.value)} />
+            </label>
+            <label>
+              页面缩放
+              <select value={browserZoomFactor} onChange={(event) => setBrowserZoomFactor(Number(event.target.value))}>
+                {BROWSER_ZOOM_OPTIONS.map((option) => (
+                  <option value={option.value} key={option.value}>{option.label}</option>
+                ))}
+              </select>
             </label>
             <div className="trace">detected: {detectedChromiumPath || 'not found'}</div>
             <div className="modal-actions">

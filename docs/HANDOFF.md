@@ -9,15 +9,15 @@
 - 内嵌网页已走 Electron 原生 BrowserView 控制器，按 profile/tab 管理实例。
 - 多环境、代理、标签、收藏、历史、下载、权限策略、证书策略、外部协议拦截、崩溃状态已经有核心链路。
 - 硬件指纹 v2 模型已经落到 `electron/services/fingerprint/model.ts`，并通过 `fingerprintRuntime` 接入 CDP/Accept-Language/UA metadata。
-- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 已有实验开关，浏览器级冒烟已覆盖双路径，下载文件定位已补，用户可调 zoom 仍需要补。
+- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 已有实验开关，浏览器级冒烟已覆盖双路径，下载文件定位和用户可调 zoom 已补。
 
-当前推荐下一步：增加浏览器 zoom 设置，保持默认 100%，不要恢复动态整页缩放。
+当前推荐下一步：补下载失败原因和代理/证书错误入口，让浏览器失败状态更接近真实可用产品。
 
 ## 基本信息
 
 - 工作目录：`/Users/suweichao/项目/指纹浏览器`
 - 当前分支：`codex/fingerprint-model-spec`
-- 当前版本：`package.json` 为 `1.0.13`
+- 当前版本：`package.json` 为 `1.0.14`
 - 最新提交：以 `git log --oneline -1` 为准
 - 语言：和用户沟通用中文
 - UI 方向：保持终端像素风，但交互要像正常浏览器
@@ -40,9 +40,9 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 
 ## 最近验证基线
 
-截至 `Release v1.0.13`：
+截至 `Release v1.0.14`：
 
-- `npm run test` 通过：37 个测试文件，178 个测试
+- `npm run test` 通过：37 个测试文件，177 个测试
 - `npm run build` 通过
 - `npm run typecheck` 通过
 - `npm run smoke:browser` 通过，覆盖 BrowserView 与 WebContentsView
@@ -133,6 +133,18 @@ npm run build
 - inspector 下载面板在非 progressing 且有保存路径时显示“定位”
 - dev mock API 同步补齐该能力
 
+### v1.0.14
+
+完成浏览器 zoom 设置。
+
+- `AppSettings` 增加 `browserZoomFactor`
+- `SettingsStore` 规范化 zoom，仅接受 80%、90%、100%、110%、125%
+- 默认 zoom 仍为 100%
+- 设置弹窗增加“页面缩放”选择
+- 主进程在 show、resize、dom-ready、did-stop-loading 和设置更新后应用固定 zoom
+- 移除 native BrowserView 的动态宽度适配调用，避免页面加载或切 tab 后覆盖用户 zoom
+- 保留 `<webview>` 历史 fit 逻辑，后续可单独清理
+
 ## 核心目录
 
 - `src/App.tsx`：主 UI，环境列表、标签栏、地址栏、inspector、自测报告、下载面板、崩溃态。
@@ -140,7 +152,7 @@ npm run build
 - `src/types.ts`：renderer 可见的数据结构与 preload API 类型。
 - `src/browserWorkspace.ts`：profile/tab/bookmark/history 的纯函数状态更新。
 - `src/embeddedBrowser.ts`：内嵌浏览器前端 helper。
-- `src/nativeBrowserView.ts`：BrowserView 坐标与缩放常量。
+- `src/nativeBrowserView.ts`：BrowserView 坐标转换。
 - `src/fingerprintEditor.ts`：指纹编辑表单和 legacy config 映射。
 - `src/deviceProfile.ts`：inspector 设备信息展示行。
 - `src/selfTestReport.ts`：自测结果转换为 UI checklist。
@@ -182,13 +194,14 @@ npm run build
 - 后退、前进、刷新走 native webContents 命令。
 - 外部协议默认阻止，证书错误默认阻止。
 - 页面崩溃会写入 tab runtime，并在 UI 显示可 reload 的崩溃态。
+- 设置里可选固定页面 zoom：80%、90%、100%、110%、125%，默认 100%，切 tab 和 reload 后保持一致。
 
 下载：
 
 - `DownloadController` 跟踪 profile-scoped 下载。
 - inspector 展示下载列表。
 - 用户可以取消下载。
-- 当前还未做“打开文件/显示到文件夹”的完整系统集成验收。
+- 下载完成或失败后可以通过“定位”在文件夹中显示保存路径。
 
 权限：
 
@@ -216,13 +229,9 @@ WebContentsView adapter 已经有基础，后续切默认后可重新评估层�
 
 ### 网页缩放
 
-用户明确不想页面加载后跳动，也不想整页缩成一屏。当前固定：
+用户明确不想页面加载后跳动，也不想整页缩成一屏。当前通过 app setting 保存固定 zoom，允许值为 80%、90%、100%、110%、125%，默认 100%。
 
-```ts
-export const FIXED_BROWSER_ZOOM = 1;
-```
-
-不要恢复旧的“按完整页面高度缩放”。如需调整，优先做用户可选 zoom 或简单宽度适配。
+不要恢复旧的“按完整页面高度缩放”。native BrowserView 也不要再按内容宽度动态改 zoom，否则会覆盖用户设置。
 
 ### 指纹模型
 
@@ -237,37 +246,36 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 ## 现在最应该做的事
 
-### 1. 浏览器 zoom 设置
+### 1. 下载失败原因展示
 
-原因：当前固定 100% 缩放符合“不要跳动”的要求，但用户后续可能需要手动调整页面大小。
+原因：下载已经能跟踪、取消和定位文件，但失败、被中断、保存路径不可用时，用户需要更明确的原因和下一步动作。
 
 建议改动：
 
-- `electron/main.ts`
-  - 增加 profile 或 app setting 的 zoom 读取
-  - `resetNativeBrowserZoom` 读取用户设置，不恢复动态整页缩放
-- `electron/preload.ts`
-  - 暴露对应 API
-- `src/types.ts`
-  - 扩展 settings 或 profile 配置
+- `electron/services/downloadController.ts`
+  - 规范 interrupted/cancelled/completed 的错误字段
+  - 记录 Electron download item 的错误状态和路径不可用原因
 - `src/App.tsx`
-  - 在设置或 inspector 里增加 80/90/100/110/125 这类明确选项
+  - 下载面板展示失败原因
+  - “定位”不可用时给出清晰 UI 状态，不只写全局 error
+- `tests/downloadController.test.ts`
+  - 覆盖 interrupted error、缺失保存路径、取消后的展示数据
 - `tests/browserChromeUi.test.ts`
-  - 补 UI 与主进程设置读取约束
+  - 补下载失败原因 UI 约束
 
 验收标准：
 
-- 默认仍是 100%
-- 调整 zoom 不触发动态整页缩放
-- 切 tab 和 reload 后 zoom 保持一致
+- interrupted 下载能展示错误原因
+- 用户取消和真实中断能区分
+- 保存路径不可用时 UI 不显示无效定位动作
 
 ## 中期路线
 
-1. profile 设置中增加浏览器 zoom 选项，不恢复动态整页缩放。
-2. 下载增加失败原因展示。
-3. 代理失败和证书失败在 UI 中做更明确的错误入口。
-4. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
-5. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
+1. 下载增加失败原因展示。
+2. 代理失败和证书失败在 UI 中做更明确的错误入口。
+3. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
+4. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
+5. 评估何时把 `USE_WEB_CONTENTS_VIEW=1` 从实验开关推进到默认路径。
 
 ## 开发规则
 

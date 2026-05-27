@@ -9,6 +9,7 @@ export function installDevApi(): void {
 
   let profiles: BrowserProfile[] = [];
   let chromiumPath = '';
+  let browserZoomFactor = 1;
   const downloads: DownloadRecord[] = [];
 
   const api: AppApi = {
@@ -221,11 +222,12 @@ export function installDevApi(): void {
       });
     },
     async getSettings() {
-      return { chromiumPath, detectedChromiumPath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' };
+      return { chromiumPath, browserZoomFactor, detectedChromiumPath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' };
     },
     async updateSettings(input) {
       chromiumPath = input.chromiumPath ?? '';
-      return { chromiumPath };
+      browserZoomFactor = input.browserZoomFactor ?? 1;
+      return { chromiumPath, browserZoomFactor };
     },
   };
 

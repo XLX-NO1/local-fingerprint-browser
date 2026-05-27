@@ -144,6 +144,7 @@ export interface LaunchResult {
 export interface AppSettings {
   chromiumPath?: string;
   detectedChromiumPath?: string;
+  browserZoomFactor?: number;
 }
 
 export interface AppApi {

@@ -18,7 +18,10 @@ afterEach(async () => {
 
 describe('SettingsStore', () => {
   it('returns default settings when no file exists', async () => {
-    await expect(store.get()).resolves.toEqual({ chromiumPath: undefined });
+    await expect(store.get()).resolves.toEqual({
+      chromiumPath: undefined,
+      browserZoomFactor: 1,
+    });
   });
 
   it('persists chromium path updates', async () => {
@@ -26,6 +29,25 @@ describe('SettingsStore', () => {
 
     await expect(store.get()).resolves.toEqual({
       chromiumPath: '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      browserZoomFactor: 1,
+    });
+  });
+
+  it('persists supported browser zoom factors', async () => {
+    await store.update({ browserZoomFactor: 1.25 });
+
+    await expect(store.get()).resolves.toEqual({
+      chromiumPath: undefined,
+      browserZoomFactor: 1.25,
+    });
+  });
+
+  it('falls back to 100 percent zoom for unsupported values', async () => {
+    await store.update({ browserZoomFactor: 1.37 });
+
+    await expect(store.get()).resolves.toEqual({
+      chromiumPath: undefined,
+      browserZoomFactor: 1,
     });
   });
 });

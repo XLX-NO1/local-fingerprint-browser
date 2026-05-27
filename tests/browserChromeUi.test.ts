@@ -101,19 +101,44 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain('new BrowserView');
   });
 
-  it('fits wide native browser pages to the available width after load and resize', () => {
+  it('applies a fixed user browser zoom instead of dynamic page fitting', () => {
     const mainSource = readFileSync('electron/main.ts', 'utf8');
     const resizeHandler = mainSource.slice(
       mainSource.indexOf("ipcMain.handle('native-browser:resize'"),
       mainSource.indexOf("ipcMain.handle('native-browser:hide'"),
     );
+    const settingsHandler = mainSource.slice(
+      mainSource.indexOf("ipcMain.handle('settings:update'"),
+      mainSource.indexOf('});', mainSource.indexOf("ipcMain.handle('settings:update'")),
+    );
 
-    expect(mainSource).toContain('computeWidthFitZoom');
-    expect(mainSource).toContain('fitNativeBrowserWidth');
-    expect(mainSource).toContain('measurePageScript()');
-    expect(mainSource).toContain('contents.on(\'did-finish-load\', () => scheduleNativeBrowserWidthFit())');
-    expect(mainSource).toContain('scheduleNativeBrowserWidthFit();');
-    expect(resizeHandler).toContain('scheduleNativeBrowserWidthFit()');
+    expect(mainSource).toContain('normalizeBrowserZoomFactor');
+    expect(mainSource).toContain('let nativeBrowserZoomFactor = 1;');
+    expect(mainSource).toContain('contents.setZoomFactor(nativeBrowserZoomFactor);');
+    expect(mainSource).not.toContain('computeWidthFitZoom');
+    expect(mainSource).not.toContain('fitNativeBrowserWidth');
+    expect(resizeHandler).toContain('resetNativeBrowserZoom();');
+    expect(resizeHandler).not.toContain('scheduleNativeBrowserWidthFit');
+    expect(settingsHandler).toContain('nativeBrowserZoomFactor = normalizeBrowserZoomFactor(settings.browserZoomFactor);');
+    expect(settingsHandler).toContain('resetNativeBrowserZoom();');
+  });
+
+  it('exposes fixed browser zoom choices in settings', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const preloadSource = readFileSync('electron/preload.ts', 'utf8');
+    const typesSource = readFileSync('src/types.ts', 'utf8');
+
+    expect(appSource).toContain('BROWSER_ZOOM_OPTIONS');
+    expect(appSource).toContain('browserZoomFactor');
+    expect(appSource).toContain('页面缩放');
+    expect(appSource).toContain('80%');
+    expect(appSource).toContain('90%');
+    expect(appSource).toContain('100%');
+    expect(appSource).toContain('110%');
+    expect(appSource).toContain('125%');
+    expect(mainSource).toContain('settings.browserZoomFactor');
+    expect(preloadSource).toContain('updateSettings: (input: AppSettings)');
+    expect(typesSource).toContain('browserZoomFactor?: number;');
   });
 
   it('attaches native BrowserView event handlers only once per view instance', () => {

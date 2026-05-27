@@ -2,7 +2,7 @@ import { app, BrowserView, BrowserWindow, ipcMain, Menu, nativeImage, session, s
 import { join } from 'node:path';
 import { BrowserLauncher, findChromiumPath } from './services/browserLauncher';
 import { ProfileStore } from './services/profileStore';
-import { SettingsStore } from './services/settingsStore';
+import { SettingsStore, normalizeBrowserZoomFactor } from './services/settingsStore';
 import { DownloadController } from './services/downloadController';
 import { certificateDecisionForError, navigationDecisionForUrl } from './services/navigationPolicy';
 import { checkProxyReachability } from './services/proxy';
@@ -34,7 +34,7 @@ import {
   updateTabRuntimeStateInProfile,
 } from '../src/browserWorkspace';
 import { computeFitPageZoom, measurePageScript, type FitSize } from '../src/webviewFit';
-import { FIXED_BROWSER_ZOOM, computeWidthFitZoom, cssRectToBrowserViewBounds, type BrowserViewBounds } from '../src/nativeBrowserView';
+import { cssRectToBrowserViewBounds, type BrowserViewBounds } from '../src/nativeBrowserView';
 
 let mainWindow: BrowserWindow | undefined;
 let store: ProfileStore;
@@ -44,7 +44,7 @@ let extensionDir: string;
 let tray: Tray | undefined;
 let isQuitting = false;
 let nativeBrowserMetadataTimer: NodeJS.Timeout | undefined;
-let nativeBrowserWidthFitTimer: NodeJS.Timeout | undefined;
+let nativeBrowserZoomFactor = 1;
 const nativeBrowserHandlerWebContents = new WeakSet<Electron.WebContents>();
 const hiddenSelfTestWindows = new Set<BrowserWindow>();
 const downloadController = new DownloadController();
@@ -200,33 +200,7 @@ function resetNativeBrowserZoom(): void {
   }
   const contents = electronWebContents(nativeBrowserView);
   contents.setZoomLevel(0);
-  contents.setZoomFactor(FIXED_BROWSER_ZOOM);
-}
-
-async function fitNativeBrowserWidth(): Promise<void> {
-  const nativeBrowserView = currentNativeBrowserView();
-  const nativeBrowserBounds = nativeBrowserController.currentBounds();
-  if (!nativeBrowserView || !nativeBrowserBounds || nativeBrowserView.webContents.isDestroyed()) {
-    return;
-  }
-  const contents = electronWebContents(nativeBrowserView);
-  const content = await contents.executeJavaScript(measurePageScript(), true) as FitSize;
-  if (!nativeBrowserView || nativeBrowserView.webContents.isDestroyed()) {
-    return;
-  }
-  const zoom = computeWidthFitZoom(nativeBrowserBounds, content);
-  contents.setZoomLevel(0);
-  contents.setZoomFactor(zoom);
-}
-
-function scheduleNativeBrowserWidthFit(delayMs = 120): void {
-  if (nativeBrowserWidthFitTimer) {
-    clearTimeout(nativeBrowserWidthFitTimer);
-  }
-  nativeBrowserWidthFitTimer = setTimeout(() => {
-    nativeBrowserWidthFitTimer = undefined;
-    void fitNativeBrowserWidth().catch(() => resetNativeBrowserZoom());
-  }, delayMs);
+  contents.setZoomFactor(nativeBrowserZoomFactor);
 }
 
 function scheduleNativeBrowserMetadataUpdate(view: NativeBrowserViewLike, url?: string): void {
@@ -333,12 +307,10 @@ function attachNativeBrowserTabHandlers(view: NativeBrowserViewLike): void {
     }
   });
   contents.on('dom-ready', resetNativeBrowserZoom);
-  contents.on('dom-ready', () => scheduleNativeBrowserWidthFit(80));
   contents.on('did-start-loading', () => updateNativeBrowserNavigationState(view, { isLoading: true, crashed: false, lastError: undefined }));
-  contents.on('did-finish-load', () => scheduleNativeBrowserWidthFit());
   contents.on('did-stop-loading', () => {
     updateNativeBrowserNavigationState(view, { isLoading: false });
-    scheduleNativeBrowserWidthFit();
+    resetNativeBrowserZoom();
   });
   contents.on('did-navigate', (_event, url) => {
     updateNativeBrowserNavigationState(view, { url, isLoading: false, crashed: false, lastError: undefined });
@@ -388,10 +360,6 @@ function detachNativeBrowserView(): void {
   if (nativeBrowserMetadataTimer) {
     clearTimeout(nativeBrowserMetadataTimer);
     nativeBrowserMetadataTimer = undefined;
-  }
-  if (nativeBrowserWidthFitTimer) {
-    clearTimeout(nativeBrowserWidthFitTimer);
-    nativeBrowserWidthFitTimer = undefined;
   }
   const host = currentNativeBrowserHost();
   if (host) {
@@ -780,21 +748,15 @@ function registerIpc(): void {
     }
     await nativeBrowserController.show(host, profile, tabId, url, bounds);
     resetNativeBrowserZoom();
-    scheduleNativeBrowserWidthFit(80);
   });
   ipcMain.handle('native-browser:resize', (_event, bounds: BrowserViewBounds) => {
     nativeBrowserController.resize(bounds);
     resetNativeBrowserZoom();
-    scheduleNativeBrowserWidthFit();
   });
   ipcMain.handle('native-browser:hide', () => {
     if (nativeBrowserMetadataTimer) {
       clearTimeout(nativeBrowserMetadataTimer);
       nativeBrowserMetadataTimer = undefined;
-    }
-    if (nativeBrowserWidthFitTimer) {
-      clearTimeout(nativeBrowserWidthFitTimer);
-      nativeBrowserWidthFitTimer = undefined;
     }
     const host = currentNativeBrowserHost();
     if (host) {
@@ -858,7 +820,9 @@ function registerIpc(): void {
   ipcMain.handle('settings:update', async (_event, input: AppSettings) => {
     const settings = await settingsStore.update(input);
     const chromiumPath = settings.chromiumPath || findChromiumPath();
+    nativeBrowserZoomFactor = normalizeBrowserZoomFactor(settings.browserZoomFactor);
     launcher = chromiumPath ? new BrowserLauncher(chromiumPath, extensionDir) : undefined;
+    resetNativeBrowserZoom();
     return settings;
   });
 }
@@ -990,6 +954,7 @@ app.whenReady().then(async () => {
   await store.reconcileRuntimeState();
   settingsStore = new SettingsStore(dataDir);
   const settings = await settingsStore.get();
+  nativeBrowserZoomFactor = normalizeBrowserZoomFactor(settings.browserZoomFactor);
   const chromiumPath = settings.chromiumPath || findChromiumPath();
   launcher = chromiumPath ? new BrowserLauncher(chromiumPath, extensionDir) : undefined;
   registerIpc();
