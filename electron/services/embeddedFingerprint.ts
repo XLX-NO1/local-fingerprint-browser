@@ -1,8 +1,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { BrowserProfile } from '../../src/types';
-import { buildCdpSetupCommands, type CdpCommand } from './cdpClient';
+import type { CdpCommand } from './cdpClient';
+import { buildFingerprintRuntimeCdpCommands } from './fingerprintRuntime';
 import { buildFingerprintPreloadScript } from './fingerprint';
+import { buildAcceptLanguage } from './fingerprint/model';
 import { proxyIdentity } from './proxy';
 
 export interface EmbeddedBrowserViewPreferences {
@@ -41,7 +43,11 @@ export function buildEmbeddedBrowserViewPreferences(profile: BrowserProfile): Em
 }
 
 export function buildEmbeddedCdpSetupCommands(profile: BrowserProfile): CdpCommand[] {
-  return buildCdpSetupCommands(profile.fingerprint, buildMainWorldPreloadScript(buildFingerprintPreloadScript(profile.fingerprint)), undefined, {
+  return buildFingerprintRuntimeCdpCommands({
+    id: profile.id,
+    fingerprint: profile.fingerprint,
+    preloadScript: buildMainWorldPreloadScript(buildFingerprintPreloadScript(profile.fingerprint)),
+    navigateUrl: undefined,
     includeDeviceMetrics: false,
   });
 }
@@ -62,9 +68,7 @@ export function shouldRecreateEmbeddedBrowserView(current: EmbeddedBrowserViewSt
 }
 
 export function buildAcceptLanguageHeader(languages: string[]): string {
-  return languages
-    .map((language, index) => (index === 0 ? language : `${language};q=${Math.max(0.1, 1 - index * 0.1).toFixed(1)}`))
-    .join(',');
+  return buildAcceptLanguage(languages);
 }
 
 function buildMainWorldPreloadScript(source: string): string {

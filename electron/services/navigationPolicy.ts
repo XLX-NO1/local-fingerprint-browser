@@ -15,3 +15,10 @@ export function navigationDecisionForUrl(rawUrl: string): NavigationDecision {
     reason: `Blocked external protocol: ${url.protocol.replace(':', '')}`,
   };
 }
+
+export function certificateDecisionForError(url: string, error: string): NavigationDecision {
+  return {
+    action: 'block',
+    reason: `Blocked certificate error for ${url}: ${error}`,
+  };
+}

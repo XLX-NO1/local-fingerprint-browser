@@ -4,7 +4,7 @@ import { BrowserLauncher, findChromiumPath } from './services/browserLauncher';
 import { ProfileStore } from './services/profileStore';
 import { SettingsStore } from './services/settingsStore';
 import { DownloadController } from './services/downloadController';
-import { navigationDecisionForUrl } from './services/navigationPolicy';
+import { certificateDecisionForError, navigationDecisionForUrl } from './services/navigationPolicy';
 import { checkProxyReachability } from './services/proxy';
 import { proxyAuthForLogin } from './services/proxy';
 import {
@@ -104,6 +104,13 @@ function createWindow(): void {
     }
     event.preventDefault();
     hideMainWindowToTray();
+  });
+  mainWindow.webContents.on('certificate-error', (event, url, error, _certificate, callback) => {
+    const decision = certificateDecisionForError(url, error);
+    if (decision.action === 'block') {
+      event.preventDefault();
+      callback(false);
+    }
   });
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
@@ -289,6 +296,14 @@ function attachNativeBrowserTabHandlers(view: BrowserView): void {
     if (decision.action === 'block') {
       event.preventDefault();
       updateNativeBrowserNavigationState(view, { lastError: decision.reason });
+    }
+  });
+  view.webContents.on('certificate-error', (event, url, error, _certificate, callback) => {
+    const decision = certificateDecisionForError(url, error);
+    if (decision.action === 'block') {
+      event.preventDefault();
+      updateNativeBrowserNavigationState(view, { lastError: decision.reason });
+      callback(false);
     }
   });
   view.webContents.on('dom-ready', resetNativeBrowserZoom);

@@ -539,7 +539,7 @@ function inferRegionCode(languages: string[], timezone: string): RegionCode {
   return (Object.entries(REGION_PRESETS).find(([, preset]) => preset.languages[0] === languages[0])?.[0] as RegionCode | undefined) ?? 'US';
 }
 
-function buildAcceptLanguage(languages: string[]): string {
+export function buildAcceptLanguage(languages: string[]): string {
   return languages
     .map((language, index) => (index === 0 ? language : `${language};q=${Math.max(0.1, 1 - index * 0.1).toFixed(1)}`))
     .join(',');

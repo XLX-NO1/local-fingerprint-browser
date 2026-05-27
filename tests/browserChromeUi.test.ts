@@ -155,6 +155,14 @@ describe('browser chrome UI', () => {
     expect(attachHandler).toContain("return { action: 'deny' };");
   });
 
+  it('blocks certificate errors instead of silently continuing', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+
+    expect(mainSource).toContain("mainWindow.webContents.on('certificate-error'");
+    expect(mainSource).toContain('certificateDecisionForError(url, error)');
+    expect(mainSource).toContain('callback(false)');
+  });
+
   it('does not explicitly close native BrowserView webContents during app quit', () => {
     const mainSource = readFileSync('electron/main.ts', 'utf8');
     const beforeQuitHandler = mainSource.slice(

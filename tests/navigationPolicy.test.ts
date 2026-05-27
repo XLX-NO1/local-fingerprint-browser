@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { navigationDecisionForUrl } from '../electron/services/navigationPolicy';
+import { certificateDecisionForError, navigationDecisionForUrl } from '../electron/services/navigationPolicy';
 
 describe('navigationPolicy', () => {
   it('allows normal web and local self-test navigation', () => {
@@ -16,6 +16,13 @@ describe('navigationPolicy', () => {
     expect(navigationDecisionForUrl('tel:+15551234567')).toEqual({
       action: 'block',
       reason: 'Blocked external protocol: tel',
+    });
+  });
+
+  it('blocks certificate errors by default', () => {
+    expect(certificateDecisionForError('https://expired.badssl.com/', 'net::ERR_CERT_DATE_INVALID')).toEqual({
+      action: 'block',
+      reason: 'Blocked certificate error for https://expired.badssl.com/: net::ERR_CERT_DATE_INVALID',
     });
   });
 });
