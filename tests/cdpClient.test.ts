@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FingerprintConfig } from '../src/types';
 import { CdpClient, buildCdpSetupCommands, buildNavigateCommand, sendCdpCommands } from '../electron/services/cdpClient';
 import { generateFingerprint } from '../electron/services/fingerprint';
+import { deriveUserAgentMetadata } from '../electron/services/fingerprint/model';
 
 let server: Server;
 let baseUrl: string;
@@ -84,6 +85,7 @@ describe('CdpClient', () => {
         userAgent: fingerprint.userAgent,
         acceptLanguage: fingerprint.languages.join(','),
         platform: fingerprint.platform,
+        userAgentMetadata: deriveUserAgentMetadata(fingerprint),
       },
     });
     expect(commands).toContainEqual({

@@ -36,6 +36,17 @@ describe('embedded fingerprint helpers', () => {
     expect(source).toContain('target.appendChild(script)');
   });
 
+  it('skips invasive fingerprint patching on known human-verification frames', async () => {
+    const profile = makeProfile(join(root, 'user-data'));
+
+    await writeEmbeddedFingerprintPreload(profile);
+    const source = await readFile(embeddedFingerprintPreloadPath(profile), 'utf8');
+
+    expect(source).toContain('shouldSkipFingerprintInjection');
+    expect(source).toContain('challenges.cloudflare.com');
+    expect(source).toContain('return true;');
+  });
+
   it('builds BrowserView preferences with isolated storage and sandboxed preload', () => {
     const profile = makeProfile(join(root, 'user-data'));
 
@@ -65,6 +76,16 @@ describe('embedded fingerprint helpers', () => {
       params: { timezoneId: profile.fingerprint.timezone },
     });
     expect(commands.map((command) => command.method)).not.toContain('Emulation.setDeviceMetricsOverride');
+  });
+
+  it('wraps native BrowserView CDP injection so human-verification frames are left untouched', () => {
+    const profile = makeProfile(join(root, 'user-data'));
+    const commands = buildEmbeddedCdpSetupCommands(profile);
+    const addScriptCommand = commands.find((command) => command.method === 'Page.addScriptToEvaluateOnNewDocument');
+
+    expect(addScriptCommand?.params?.source).toContain('shouldSkipFingerprintInjection');
+    expect(addScriptCommand?.params?.source).toContain('challenges.cloudflare.com');
+    expect(addScriptCommand?.params?.source).toContain('document.createElement');
   });
 
   it('requires recreating the native BrowserView when proxy identity changes', () => {

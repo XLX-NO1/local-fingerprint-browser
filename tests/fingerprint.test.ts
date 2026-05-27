@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildFingerprintPreloadScript, generateFingerprint } from '../electron/services/fingerprint';
+import { deriveUserAgentMetadata } from '../electron/services/fingerprint/model';
 
 describe('fingerprint generation', () => {
   it('generates stable values for the same seed', () => {
@@ -25,7 +26,28 @@ describe('fingerprint generation', () => {
     expect(script).toContain('permissions.query');
     expect(script).toContain('RTCPeerConnection');
     expect(script).toContain('webkitRTCPeerConnection');
-    expect(script).toContain('WebRTC disabled by profile policy');
+    expect(script).toContain('filterCandidateEvent');
     expect(script).toContain("typeof CanvasRenderingContext2D !== 'undefined'");
+  });
+
+  it('embeds UA client hints from the shared fingerprint model instead of duplicating derivation logic', () => {
+    const appleSilicon = {
+      ...generateFingerprint('profile-a'),
+      os: 'macos' as const,
+      platform: 'MacARM64',
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.7444.265 Safari/537.36',
+      webglRenderer: 'ANGLE (Apple, Apple M5, OpenGL 4.1)',
+      browserVersion: '142.0.7444.265',
+    };
+
+    const script = buildFingerprintPreloadScript(appleSilicon);
+    const metadata = deriveUserAgentMetadata(appleSilicon);
+
+    expect(script).toContain(`const uaMetadata = ${JSON.stringify(metadata)};`);
+    expect(script).toContain('platform: uaMetadata.platform');
+    expect(script).toContain('architecture: uaMetadata.architecture');
+    expect(script).toContain('platformVersion: uaMetadata.platformVersion');
+    expect(script).not.toContain('deriveUaHints');
+    expect(script).not.toContain('derivePlatformVersion');
   });
 });

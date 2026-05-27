@@ -1,5 +1,7 @@
 import type { FingerprintConfig } from './types';
 import { pickOsPreset } from './fingerprintPresets';
+import { regionPresetByCode } from './fingerprintRegions';
+import { DEFAULT_CHROMIUM_VERSION } from './chromiumVersion';
 
 export type FingerprintFormState = {
   os: FingerprintConfig['os'];
@@ -94,8 +96,17 @@ export function applyFingerprintOsPreset(
   };
 }
 
+export function applyFingerprintRegionPreset(form: FingerprintFormState, countryCode: string): FingerprintFormState {
+  const preset = regionPresetByCode(countryCode);
+  return {
+    ...form,
+    languages: preset.languages.join(', '),
+    timezone: preset.timezone,
+  };
+}
+
 function replaceUserAgentOs(userAgent: string, userAgentOs: string, browserVersion: string): string {
-  const chromeVersion = browserVersion.trim() || extractChromeVersion(userAgent) || '126.0.0.0';
+  const chromeVersion = browserVersion.trim() || extractChromeVersion(userAgent) || DEFAULT_CHROMIUM_VERSION;
   const next = userAgent.trim()
     ? userAgent.replace(/Mozilla\/5\.0 \([^)]+\)/, `Mozilla/5.0 (${userAgentOs})`)
     : `Mozilla/5.0 (${userAgentOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;

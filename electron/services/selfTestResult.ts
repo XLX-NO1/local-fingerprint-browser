@@ -21,6 +21,22 @@ export function summarizeSelfTestReport(report: Record<string, unknown> | undefi
   if (network?.proxyConfigured) {
     checks.push(Boolean(network.publicIp));
   }
+  const localeConsistency = report?.localeConsistency as { checks?: Array<{ passed?: boolean }> } | undefined;
+  for (const check of localeConsistency?.checks ?? []) {
+    checks.push(Boolean(check.passed));
+  }
+  const runtimeConsistency = report?.runtimeConsistency as { browserVersionMatchesRuntime?: boolean } | undefined;
+  if (runtimeConsistency) {
+    checks.push(Boolean(runtimeConsistency.browserVersionMatchesRuntime));
+    const uaClientHintsConsistency = (runtimeConsistency as {
+      uaClientHintsConsistency?: Record<string, boolean>;
+    }).uaClientHintsConsistency;
+    for (const [key, value] of Object.entries(uaClientHintsConsistency ?? {})) {
+      if (key.endsWith('MatchesProfile')) {
+        checks.push(Boolean(value));
+      }
+    }
+  }
   if (webrtc) {
     checks.push(!(webrtc.webrtcLeakRisk ?? webrtc.leakRisk));
   }

@@ -1,5 +1,6 @@
 import type { FingerprintConfig } from './types';
 import { allOsPresets } from './fingerprintPresets';
+import { DEFAULT_CHROMIUM_VERSION } from './chromiumVersion';
 
 const LANGUAGE_SETS = [
   ['en-US', 'en'],
@@ -26,8 +27,8 @@ export function generateLocalFingerprint(seed: string): FingerprintConfig {
   return {
     id: `fp-${hashSeed(seed).toString(16)}`,
     os: osProfile.os,
-    browserVersion: '126.0.0.0',
-    userAgent: `Mozilla/5.0 (${osProfile.userAgentOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36`,
+    browserVersion: DEFAULT_CHROMIUM_VERSION,
+    userAgent: `Mozilla/5.0 (${osProfile.userAgentOs}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${DEFAULT_CHROMIUM_VERSION} Safari/537.36`,
     platform: osProfile.platform,
     languages,
     timezone,

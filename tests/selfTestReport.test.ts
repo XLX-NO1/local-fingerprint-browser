@@ -14,13 +14,29 @@ describe('summarizeSelfTestReport', () => {
         proxyConfigured: true,
         publicIp: '203.0.113.10',
       },
+      localeConsistency: {
+        checks: [
+          { key: 'timezoneCountry', passed: true },
+          { key: 'languageCountry', passed: true },
+          { key: 'networkTimezone', passed: true },
+        ],
+      },
+      runtimeConsistency: {
+        browserVersionMatchesRuntime: true,
+        uaClientHintsConsistency: {
+          platformMatchesProfile: true,
+          architectureMatchesProfile: true,
+          platformVersionMatchesProfile: true,
+          fullVersionMatchesProfile: true,
+        },
+      },
       webrtc: {
         candidateCount: 0,
         webrtcLeakRisk: false,
       },
     });
 
-    expect(summary).toBe('6/6 checks ok');
+    expect(summary).toBe('14/14 checks ok');
   });
 
   it('counts missing proxy exit and webrtc leaks as failed checks', () => {
@@ -33,13 +49,28 @@ describe('summarizeSelfTestReport', () => {
         proxyConfigured: true,
         publicIp: undefined,
       },
+      localeConsistency: {
+        checks: [
+          { key: 'timezoneCountry', passed: false },
+          { key: 'languageCountry', passed: true },
+        ],
+      },
+      runtimeConsistency: {
+        browserVersionMatchesRuntime: false,
+        uaClientHintsConsistency: {
+          platformMatchesProfile: true,
+          architectureMatchesProfile: false,
+          platformVersionMatchesProfile: false,
+          fullVersionMatchesProfile: false,
+        },
+      },
       webrtc: {
         candidateCount: 2,
         webrtcLeakRisk: true,
       },
     });
 
-    expect(summary).toBe('1/4 checks ok');
+    expect(summary).toBe('3/11 checks ok');
   });
 
   it('does not count direct network mode as a proxy failure', () => {

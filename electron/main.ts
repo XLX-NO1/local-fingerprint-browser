@@ -44,7 +44,7 @@ let nativeBrowserAttached = false;
 let nativeBrowserMetadataTimer: NodeJS.Timeout | undefined;
 let nativeBrowserWidthFitTimer: NodeJS.Timeout | undefined;
 let nativeBrowserState: EmbeddedBrowserViewState = {};
-let nativeBrowserHandlersAttached = false;
+const nativeBrowserHandlerWebContents = new WeakSet<Electron.WebContents>();
 const hiddenSelfTestWindows = new Set<BrowserWindow>();
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -225,10 +225,10 @@ async function openNativeBrowserPopupAsTab(url: string): Promise<void> {
 }
 
 function attachNativeBrowserTabHandlers(view: BrowserView): void {
-  if (nativeBrowserHandlersAttached) {
+  if (nativeBrowserHandlerWebContents.has(view.webContents)) {
     return;
   }
-  nativeBrowserHandlersAttached = true;
+  nativeBrowserHandlerWebContents.add(view.webContents);
   view.webContents.setWindowOpenHandler(({ url }) => {
     void openNativeBrowserPopupAsTab(url).catch(() => undefined);
     return { action: 'deny' };
@@ -253,7 +253,6 @@ function disposeNativeBrowserView(): void {
   nativeBrowserView = undefined;
   nativeBrowserProfileId = undefined;
   nativeBrowserState = {};
-  nativeBrowserHandlersAttached = false;
 }
 
 function detachNativeBrowserView(): void {

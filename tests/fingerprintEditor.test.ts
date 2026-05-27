@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateFingerprint } from '../electron/services/fingerprint';
-import { applyFingerprintOsPreset, fingerprintToForm, formToFingerprint, hasFingerprintFormChanges } from '../src/fingerprintEditor';
+import { applyFingerprintRegionPreset, applyFingerprintOsPreset, fingerprintToForm, formToFingerprint, hasFingerprintFormChanges } from '../src/fingerprintEditor';
 
 describe('fingerprint editor mapping', () => {
   it('round-trips editable fingerprint values through form state', () => {
@@ -117,5 +117,14 @@ describe('fingerprint editor mapping', () => {
     expect(macM5.userAgent).toContain('Macintosh; Intel Mac OS X 15_5');
     expect(macM5.platform).toBe('MacARM64');
     expect(macM5.webglRenderer).toContain('Apple M5');
+  });
+
+  it('applies selected country language and timezone to the editor form', () => {
+    const form = fingerprintToForm(generateFingerprint('region-editor-fingerprint'));
+
+    const updated = applyFingerprintRegionPreset(form, 'DE');
+
+    expect(updated.languages).toBe('de-DE, de, en-US');
+    expect(updated.timezone).toBe('Europe/Berlin');
   });
 });

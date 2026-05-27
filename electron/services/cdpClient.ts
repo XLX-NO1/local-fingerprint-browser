@@ -1,4 +1,5 @@
 import type { FingerprintConfig } from '../../src/types';
+import { deriveUserAgentMetadata } from './fingerprint/model';
 
 export interface CdpCommand {
   method: string;
@@ -104,6 +105,7 @@ export function buildCdpSetupCommands(
         userAgent: fingerprint.userAgent,
         acceptLanguage: fingerprint.languages.join(','),
         platform: fingerprint.platform,
+        userAgentMetadata: deriveUserAgentMetadata(fingerprint),
       },
     },
     {

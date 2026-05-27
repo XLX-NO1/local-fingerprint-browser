@@ -41,7 +41,7 @@ export function buildEmbeddedBrowserViewPreferences(profile: BrowserProfile): Em
 }
 
 export function buildEmbeddedCdpSetupCommands(profile: BrowserProfile): CdpCommand[] {
-  return buildCdpSetupCommands(profile.fingerprint, buildFingerprintPreloadScript(profile.fingerprint), undefined, {
+  return buildCdpSetupCommands(profile.fingerprint, buildMainWorldPreloadScript(buildFingerprintPreloadScript(profile.fingerprint)), undefined, {
     includeDeviceMetrics: false,
   });
 }
@@ -71,8 +71,18 @@ function buildMainWorldPreloadScript(source: string): string {
   return `
 (() => {
   const source = ${JSON.stringify(source)};
+  const shouldSkipFingerprintInjection = () => {
+    try {
+      return location.hostname === 'challenges.cloudflare.com';
+    } catch {
+      return false;
+    }
+  };
   let injected = false;
   const inject = () => {
+    if (shouldSkipFingerprintInjection()) {
+      return true;
+    }
     if (injected) {
       return true;
     }

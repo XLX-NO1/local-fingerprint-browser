@@ -5,13 +5,15 @@ import { filterProfiles, type ProfileGroupFilter } from './profileFilters';
 import { buildSelfTestChecklist } from './selfTestReport';
 import { profileAddressBarUrl } from './embeddedBrowser';
 import { buildDeviceProfileRows } from './deviceProfile';
-import { applyFingerprintOsPreset, fingerprintToForm, formToFingerprint, hasFingerprintFormChanges, type FingerprintFormState } from './fingerprintEditor';
+import { applyFingerprintRegionPreset, applyFingerprintOsPreset, fingerprintToForm, formToFingerprint, hasFingerprintFormChanges, type FingerprintFormState } from './fingerprintEditor';
 import { generateLocalFingerprint } from './localFingerprint';
 import { isFingerprintSelfTestUrl } from './selfTestDisplay';
+import { generateFingerprintForRegion, inferRegionFromFingerprint, REGION_PRESETS } from './fingerprintRegions';
 
 const PROFILE_COLORS = ['#52ff9b', '#5ee7ff', '#ffd166', '#ff5d73', '#b58cff', '#ff9f43'];
 const DEFAULT_PROFILE_COLOR = PROFILE_COLORS[0];
-const DEFAULT_CREATE_FINGERPRINT = generateLocalFingerprint('create-profile-default');
+const DEFAULT_REGION = 'US';
+const DEFAULT_CREATE_FINGERPRINT = generateFingerprintForRegion(DEFAULT_REGION, 'create-profile-default');
 const DEFAULT_FORM_FINGERPRINT = fingerprintToForm(DEFAULT_CREATE_FINGERPRINT);
 
 export default function App() {
@@ -31,6 +33,7 @@ export default function App() {
   const [openUrl, setOpenUrl] = useState('https://example.com');
   const [isEditingUrl, setIsEditingUrl] = useState(false);
   const [proxyFormUrl, setProxyFormUrl] = useState('');
+  const [selectedRegion, setSelectedRegion] = useState(DEFAULT_REGION);
   const mainRef = useRef<HTMLElement | null>(null);
   const nativeBrowserFrameRef = useRef<HTMLDivElement | null>(null);
   const proxyInputRef = useRef<HTMLInputElement | null>(null);
@@ -181,19 +184,20 @@ export default function App() {
   async function createProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      const fingerprintChanged = hasFingerprintFormChanges(DEFAULT_CREATE_FINGERPRINT, fingerprint);
       const created = await window.api.createProfile({
         name: form.name,
         group: form.group,
         notes: form.notes,
         color: form.color,
         proxyUrl: form.proxyUrl?.trim() || undefined,
-        ...(fingerprintChanged ? { fingerprint: formToFingerprint(DEFAULT_CREATE_FINGERPRINT, fingerprint) } : {}),
+        fingerprint: formToFingerprint(DEFAULT_CREATE_FINGERPRINT, fingerprint),
       });
       setIsEditorOpen(false);
       setEditingProfile(undefined);
       setSelectedId(created.id);
       setForm({ name: '', group: 'Default', notes: '', color: DEFAULT_PROFILE_COLOR, proxyUrl: '' });
+      setSelectedRegion(DEFAULT_REGION);
+      setFingerprint(DEFAULT_FORM_FINGERPRINT);
       await refreshProfiles();
     } catch (caught) {
       setError(toMessage(caught));
@@ -249,7 +253,9 @@ export default function App() {
       color: profile?.color ?? DEFAULT_PROFILE_COLOR,
       proxyUrl: formatProxyInput(profile?.proxy),
     });
-    setFingerprint(profile ? fingerprintToForm(profile.fingerprint) : DEFAULT_FORM_FINGERPRINT);
+    const nextFingerprint = profile ? fingerprintToForm(profile.fingerprint) : DEFAULT_FORM_FINGERPRINT;
+    setFingerprint(nextFingerprint);
+    setSelectedRegion(profile ? inferRegionFromFingerprint(profile.fingerprint) : DEFAULT_REGION);
     setIsEditorOpen(true);
   }
 
@@ -598,6 +604,18 @@ export default function App() {
               </div>
             </div>
             <label>
+              国家 / 地区
+              <select value={selectedRegion} onChange={(event) => {
+                const countryCode = event.target.value;
+                setSelectedRegion(countryCode);
+                setFingerprint(applyFingerprintRegionPreset(fingerprint, countryCode));
+              }}>
+                {REGION_PRESETS.map((preset) => (
+                  <option value={preset.countryCode} key={preset.countryCode}>{preset.countryCode} · {preset.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
               代理 URL
               <input ref={proxyInputRef} placeholder="socks5://127.0.0.1:1080" value={form.proxyUrl} onChange={(event) => setForm({ ...form, proxyUrl: event.target.value })} />
             </label>
@@ -678,8 +696,10 @@ function Inspector({
   onOpenSelfTest(profile: BrowserProfile): void;
 }) {
   const checklist = buildSelfTestChecklist(profile.selfTestReport);
-  const network = profile.selfTestReport?.network as { publicIp?: string | null; error?: string | null; proxyConfigured?: boolean } | undefined;
+  const network = profile.selfTestReport?.network as { publicIp?: string | null; error?: string | null; proxyConfigured?: boolean; countryCode?: string | null; countryName?: string | null; timezone?: string | null } | undefined;
   const webrtc = profile.selfTestReport?.webrtc as { candidateCount?: number; webrtcLeakRisk?: boolean; leakRisk?: boolean } | undefined;
+  const localeConsistency = profile.selfTestReport?.localeConsistency as { score?: number; status?: string; summary?: string } | undefined;
+  const runtimeConsistency = profile.selfTestReport?.runtimeConsistency as { expectedChromiumVersion?: string; profileBrowserVersion?: string; browserVersionMatchesRuntime?: boolean } | undefined;
   const deviceRows = buildDeviceProfileRows(profile.fingerprint);
 
   return (
@@ -690,6 +710,8 @@ function Inspector({
         <Kv label="proxy check" value={profile.proxy?.lastCheckStatus ? `${profile.proxy.lastCheckStatus}${profile.proxy.lastCheckLatencyMs ? ` · ${profile.proxy.lastCheckLatencyMs}ms` : ''}` : 'not checked'} />
         <Kv label="timezone" value={profile.fingerprint.timezone} />
         <Kv label="language" value={profile.fingerprint.languages.join(',')} />
+        <Kv label="locale score" value={localeConsistency ? `${localeConsistency.score ?? 0}% · ${localeConsistency.status ?? 'unknown'}` : 'not tested'} />
+        <Kv label="runtime" value={runtimeConsistency ? `${runtimeConsistency.browserVersionMatchesRuntime ? 'ok' : 'mismatch'} · ${runtimeConsistency.profileBrowserVersion ?? 'unknown'}` : 'not tested'} />
         <Kv label="webrtc" value={profile.fingerprint.webrtcPolicy} />
         <Kv label="automation" value={profile.lastError ? 'degraded' : profile.status === 'running' ? 'attached' : 'waiting'} />
         <Kv label="last url" value={profile.lastOpenedUrl ?? 'not opened'} />
@@ -718,6 +740,8 @@ function Inspector({
       </Panel>
       <Panel panelId="self-test-report" title="self-test report" meta={profile.selfTestSummary ?? 'pending'}>
         {network ? <Kv label="exit ip" value={network.publicIp ? `${network.publicIp}${network.proxyConfigured ? ' · proxy' : ' · direct'}` : network.error ?? 'not detected'} /> : null}
+        {network ? <Kv label="exit region" value={[network.countryCode, network.countryName, network.timezone].filter(Boolean).join(' · ') || 'not detected'} /> : null}
+        {localeConsistency ? <Kv label="locale" value={localeConsistency.summary ?? `${localeConsistency.score ?? 0}%`} /> : null}
         {webrtc ? <Kv label="webrtc" value={`${webrtc.candidateCount ?? 0} candidates · ${(webrtc.webrtcLeakRisk ?? webrtc.leakRisk) ? 'risk' : 'ok'}`} /> : null}
         <div className="chips">
           {checklist.length > 0
@@ -748,6 +772,8 @@ function SelfTestReportView({ profile }: { profile: BrowserProfile }) {
   const webgl = report?.webgl as Record<string, unknown> | undefined;
   const network = report?.network as Record<string, unknown> | undefined;
   const webrtc = report?.webrtc as Record<string, unknown> | undefined;
+  const localeConsistency = report?.localeConsistency as Record<string, unknown> | undefined;
+  const runtimeConsistency = report?.runtimeConsistency as Record<string, unknown> | undefined;
 
   return (
     <div className="self-test-view">
@@ -763,7 +789,8 @@ function SelfTestReportView({ profile }: { profile: BrowserProfile }) {
       <div className="self-test-grid">
         <SelfTestBox title="Expected Profile" value={expected ?? expectedFromProfile(profile)} />
         <SelfTestBox title="Observed Browser" value={observed ?? { status: 'waiting for hidden Chromium capture' }} />
-        <SelfTestBox title="Canvas / Network" value={{ canvasHash: report?.canvasHash ?? 'pending', network: network ?? 'pending' }} />
+        <SelfTestBox title="Network / Locale" value={{ network: network ?? 'pending', localeConsistency: localeConsistency ?? 'pending', runtimeConsistency: runtimeConsistency ?? 'pending' }} />
+        <SelfTestBox title="Canvas" value={{ canvasHash: report?.canvasHash ?? 'pending' }} />
         <SelfTestBox title="WebGL / WebRTC" value={{ webgl: webgl ?? 'pending', webrtc: webrtc ?? 'pending' }} />
       </div>
     </div>
@@ -788,6 +815,10 @@ function expectedFromProfile(profile: BrowserProfile): Record<string, unknown> {
     languages: profile.fingerprint.languages,
     timezone: profile.fingerprint.timezone,
     screen: `${profile.fingerprint.screenWidth}x${profile.fingerprint.screenHeight}`,
+    hardwareConcurrency: profile.fingerprint.hardwareConcurrency,
+    deviceMemory: profile.fingerprint.deviceMemory,
+    plugins: profile.fingerprint.plugins,
+    mimeTypes: profile.fingerprint.mimeTypes,
     webglVendor: profile.fingerprint.webglVendor,
     webglRenderer: profile.fingerprint.webglRenderer,
   };

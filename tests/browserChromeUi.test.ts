@@ -110,11 +110,16 @@ describe('browser chrome UI', () => {
       mainSource.indexOf('function disposeNativeBrowserView'),
       mainSource.indexOf("app.on('before-quit'"),
     );
+    const createViewHandler = mainSource.slice(
+      mainSource.indexOf("ipcMain.handle('native-browser:show'"),
+      mainSource.indexOf("ipcMain.handle('native-browser:resize'"),
+    );
 
-    expect(mainSource).toContain('let nativeBrowserHandlersAttached = false;');
-    expect(attachHandler).toContain('if (nativeBrowserHandlersAttached)');
-    expect(attachHandler).toContain('nativeBrowserHandlersAttached = true;');
-    expect(disposeHandler).toContain('nativeBrowserHandlersAttached = false;');
+    expect(mainSource).toContain('const nativeBrowserHandlerWebContents = new WeakSet<Electron.WebContents>();');
+    expect(attachHandler).toContain('if (nativeBrowserHandlerWebContents.has(view.webContents))');
+    expect(attachHandler).toContain('nativeBrowserHandlerWebContents.add(view.webContents);');
+    expect(createViewHandler).toContain('attachNativeBrowserTabHandlers(nativeBrowserView);');
+    expect(disposeHandler).not.toContain('nativeBrowserHandlersAttached = false;');
   });
 
   it('does not explicitly close native BrowserView webContents during app quit', () => {
@@ -213,6 +218,9 @@ describe('browser chrome UI', () => {
 
   it('exposes editable fingerprint controls in the profile editor', () => {
     expect(appSource).toContain('指纹配置');
+    expect(appSource).toContain('国家 / 地区');
+    expect(appSource).toContain('REGION_PRESETS.map');
+    expect(appSource).toContain('applyFingerprintRegionPreset');
     expect(appSource).toContain('fingerprint-form-grid');
     expect(appSource).toContain('fingerprint.os');
     expect(appSource).toContain('fingerprint.languages');
