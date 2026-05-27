@@ -41,6 +41,12 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 
 ## 当前运行状态
 
+当前代码状态：
+
+- 当前分支：`codex/fingerprint-model-spec`
+- 最新提交：`3eca3c7 Release v1.0.5`
+- 工作区：提交后干净
+
 最近一次验证：
 
 - `npm run typecheck` 通过
@@ -145,6 +151,243 @@ export const FIXED_BROWSER_ZOOM = 1;
 
 ## 后续建议
 
+### 总体路线
+
+接下来目标不是继续堆 UI，而是把现在能用的 BrowserView 浏览能力收拢成真正浏览器内核：
+
+1. 先把“tab runtime + navigation state”补完整，让主进程知道每个 tab 的加载、前进、后退、崩溃、错误状态。
+2. 再加 `WebContentsView` adapter，替换 deprecated `BrowserView`。
+3. 然后补浏览器必备能力：下载、权限、证书/外部协议、崩溃恢复。
+4. 最后把硬件指纹 v2 模型接入 runtime、自测和 UI，减少伪装值漂移。
+
+### 下一阶段 1：导航状态和 tab runtime
+
+目标：前端不再用 `selected?.lastOpenedUrl` 粗略判断按钮状态，而是由主进程返回当前 tab 的真实状态。
+
+要改的文件：
+
+- `src/types.ts`：新增 `BrowserTabRuntime`、`BrowserNavigationState`，扩展 `AppApi`。
+- `electron/services/nativeBrowserViewController.ts`：保存每个 tab 的 runtime 状态。
+- `electron/main.ts`：监听 webContents 事件并通过 IPC 或 `profiles:changed` 更新 UI。
+- `src/App.tsx`：后退/前进/刷新按钮改为读 runtime 状态。
+- `tests/nativeBrowserViewController.test.ts`：补导航状态事件测试。
+- `tests/browserChromeUi.test.ts`：补按钮 disabled 来源测试。
+
+建议数据结构：
+
+```ts
+export interface BrowserNavigationState {
+  tabId: string;
+  profileId: string;
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  isLoading: boolean;
+  crashed: boolean;
+  lastError?: string;
+}
+```
+
+事件来源：
+
+- `did-start-loading`：`isLoading = true`
+- `did-stop-loading`：`isLoading = false`
+- `did-navigate` / `did-navigate-in-page`：更新 URL、history 状态
+- `page-title-updated`：更新 title
+- `did-fail-load`：写入 `lastError`
+- `render-process-gone`：`crashed = true`
+
+验收标准：
+
+- 后退按钮只在当前 tab `canGoBack` 为 true 时可点。
+- 前进按钮只在当前 tab `canGoForward` 为 true 时可点。
+- reload 只刷新当前 tab 的 webContents。
+- 隐藏 tab 的导航事件只更新它自己的 metadata，不切换 active tab。
+
+### 下一阶段 2：WebContentsView adapter
+
+目标：为 Electron 新版视图层做迁移，减少 BrowserView 层级问题。
+
+要改的文件：
+
+- 新增 `electron/services/browserPageView.ts`：定义统一 view adapter 接口。
+- 新增 `electron/services/browserViewPageView.ts`：把当前 BrowserView 包起来。
+- 新增 `electron/services/webContentsViewPageView.ts`：实现 WebContentsView 版本。
+- 修改 `electron/services/nativeBrowserViewController.ts`：依赖接口，不直接假设 BrowserView。
+- 修改 `electron/main.ts`：选择 adapter，先默认 BrowserView，WebContentsView 走实验开关。
+- 新增 `tests/browserPageViewAdapter.test.ts`：同一组契约跑两个 adapter 的 fake 实现。
+
+接口建议：
+
+```ts
+export interface BrowserPageView {
+  readonly webContents: Electron.WebContents;
+  setBounds(bounds: BrowserViewBounds): void;
+  setAutoResize(options: { width: boolean; height: boolean }): void;
+  destroy(): void;
+}
+
+export interface BrowserPageHost {
+  addPageView(view: BrowserPageView): void;
+  removePageView(view: BrowserPageView): void;
+}
+```
+
+验收标准：
+
+- 当前 BrowserView 行为不退化。
+- WebContentsView adapter 可以通过单元测试创建、显示、隐藏、销毁。
+- React modal 不再需要长期依赖 hide/show workaround 后，再考虑切默认。
+
+### 下一阶段 3：下载管理
+
+目标：下载不再静默落到系统默认行为，而是 profile-scoped、可见、可取消。
+
+要改的文件：
+
+- 新增 `electron/services/downloadController.ts`
+- 修改 `src/types.ts`：新增 `DownloadRecord`
+- 修改 `electron/main.ts`：监听 `session.on('will-download')`
+- 修改 `electron/preload.ts`：暴露下载列表、取消、打开文件 API
+- 修改 `src/App.tsx`：增加下载区域或 inspector 下载面板
+- 新增 `tests/downloadController.test.ts`
+
+数据结构建议：
+
+```ts
+export interface DownloadRecord {
+  id: string;
+  profileId: string;
+  tabId?: string;
+  url: string;
+  filename: string;
+  savePath: string;
+  status: 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+  receivedBytes: number;
+  totalBytes?: number;
+  error?: string;
+}
+```
+
+验收标准：
+
+- 每个下载记录能关联 profile。
+- 下载进度可更新。
+- 用户可以取消下载。
+- 不自动执行下载文件。
+
+### 下一阶段 4：权限、外部协议和证书策略
+
+目标：把敏感能力默认收紧，避免网页突破 profile 边界。
+
+要改的文件：
+
+- 新增 `electron/services/permissionController.ts`
+- 修改 `electron/services/embeddedSession.ts`
+- 修改 `electron/main.ts`
+- 修改 `src/types.ts`
+- 新增 `tests/permissionController.test.ts`
+
+初始策略：
+
+- notification：默认 deny，后续可 profile 配置。
+- geolocation：默认 deny。
+- camera/microphone：默认 deny。
+- MIDI/HID/serial/Bluetooth：默认 deny。
+- clipboard：只保留浏览器默认 user gesture 行为。
+- `mailto:`、`tel:`、自定义协议：先阻止，并写入 launchTrace。
+- 证书错误：默认阻止，不自动忽略。
+
+验收标准：
+
+- 测试能证明敏感权限默认被拒绝。
+- 外部协议不会绕过当前 profile 跑到系统应用。
+- 证书错误不会静默继续。
+
+### 下一阶段 5：崩溃恢复和启动 reconcile
+
+目标：页面崩溃、应用重启后状态可解释，不让用户误以为环境仍正常。
+
+要改的文件：
+
+- `electron/services/nativeBrowserViewController.ts`
+- `electron/services/profileStore.ts`
+- `electron/main.ts`
+- `src/types.ts`
+- `src/App.tsx`
+- `tests/nativeBrowserViewController.test.ts`
+- 新增 `tests/profileRecovery.test.ts`
+
+要做的事：
+
+- 监听 `render-process-gone`，给 tab 标记 `crashed = true`。
+- reload 崩溃 tab 时清掉 crashed 状态。
+- app 启动时清理 stale running profile 状态。
+- profile status 和 tab crash state 分开，不要把整个 profile 直接标死。
+
+验收标准：
+
+- tab 崩溃后 UI 有明确状态。
+- 点击 reload 只重载崩溃 tab。
+- 重启 app 后不会保留假的 running/pid。
+
+### 下一阶段 6：硬件指纹 v2 runtime 接入
+
+目标：把 `docs/architecture/hardware-fingerprint-spec.md` 里的硬件模型真正接到运行时，而不是只停留在文档。
+
+已有基础：
+
+- `electron/services/fingerprint/model.ts`
+- `electron/services/fingerprint/modules.ts`
+- `electron/services/fingerprint/scriptBuilder.ts`
+- `electron/services/fingerprint/*`
+- `docs/architecture/hardware-fingerprint-spec.md`
+
+下一步要做：
+
+- 增加 `HardwareFingerprintProfile` 内部模型，保留旧 `FingerprintConfig` 兼容出口。
+- 用 device class 约束 OS、UA、UA-CH、platform、WebGL、CPU、memory、screen。
+- 让 CDP、session header、preload script、自测页面都从同一 derived values 读取。
+- 指纹变化时，调用 `disposeNativeBrowserProfileViews(profileId)` 清理该 profile 的所有 live view。
+- UI 编辑器先保留旧字段，但保存时走兼容转换。
+
+验收标准：
+
+- 同一个 seed 生成稳定。
+- Windows/Mac/Linux 字段内部一致。
+- UA Client Hints 和 UA 字符串一致。
+- WebGL renderer 与 platform/device class 不冲突。
+- 自测页面能显示 v2 derived values。
+
+### 下一阶段 7：前端体验收口
+
+目标：让用户感觉这是浏览器，不是测试面板。
+
+要改的文件：
+
+- `src/App.tsx`
+- `src/styles.css`
+- `src/types.ts`
+- `tests/browserChromeUi.test.ts`
+
+建议顺序：
+
+1. 工具栏按钮用 runtime state 控制 disabled。
+2. 增加 loading 状态，页面加载中显示轻量指示。
+3. 增加 crash/error 状态视图。
+4. inspector 展示当前 tab URL、title、loading、history、proxy、fingerprint health。
+5. 下载面板放在 inspector 或底部抽屉，不要做营销式 landing 页面。
+
+验收标准：
+
+- 主要按钮状态和当前 tab 一致。
+- 加载、失败、崩溃都有可见状态。
+- 弹窗不被网页盖住。
+- 页面文字不溢出按钮和 panel。
+
+### 做事顺序建议
+
 优先级高：
 
 1. 增加 WebContentsView adapter，逐步替换 deprecated BrowserView。
@@ -164,6 +407,27 @@ export const FIXED_BROWSER_ZOOM = 1;
 1. 整理旧 `<webview>` fit 相关代码。当前 `webview:fit-page` 和 `src/webviewFit.ts` 还保留着，主要是历史遗留和测试覆盖。
 2. 清理构建产物，建立 git 仓库并加 `.gitignore`。
 3. 增加 e2e 自动化测试，目前主要是单元测试和源码约束测试。
+
+## 开发规则
+
+- 每个阶段先写测试，再改实现。
+- 每个可独立验收的阶段单独提交。
+- 不要把指纹模型重写、WebContentsView 迁移、下载权限一次性混在一个提交里。
+- 不要回退 `NativeBrowserViewController`，它是后续浏览器内核边界。
+- 不要恢复动态整页缩放；网页应像正常浏览器，必要时只做宽度适配或用户可选 zoom。
+- 不要直接在持久化 profile 里保存 Electron 对象，只保存 id、状态、URL、title、错误信息。
+- 当前构建产物 `dist/`、`dist-electron/`、`release/` 已存在，改源码时不要把它们当主逻辑。
+
+## 建议提交拆分
+
+1. `Add navigation runtime state`
+2. `Add browser page view adapter boundary`
+3. `Add experimental WebContentsView adapter`
+4. `Add profile scoped download controller`
+5. `Add permission and external protocol policy`
+6. `Add tab crash recovery state`
+7. `Wire hardware fingerprint v2 runtime`
+8. `Surface browser health in inspector`
 
 ## 常用验证
 
@@ -196,4 +460,4 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 - 点击网页链接新窗口必须进入内部标签页，不要弹独立窗口。
 - 标签切换时地址栏要跟着变。
 - 新建环境弹窗不能被网页挡住。
-- 网页不要加载后动态缩放跳动，当前用固定 0.9 缩放。
+- 网页不要加载后动态缩放跳动，当前用固定 1 倍缩放。
