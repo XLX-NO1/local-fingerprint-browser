@@ -6,12 +6,12 @@
 
 项目已经从“能打开网页的 Electron MVP”推进到一个可继续演进的本地指纹浏览器骨架：
 
-- 内嵌网页已走 Electron 原生 BrowserView 控制器，按 profile/tab 管理实例。
+- 内嵌网页原本走 Electron 原生 BrowserView 控制器，按 profile/tab 管理实例；但 2026-05-27 晚上发现 BrowserView 原生层会持续盖住右侧栏，当前工作区有未完成的 DOM `<webview>` 切换实验。
 - 多环境、代理、标签、收藏、历史、下载、权限策略、证书策略、外部协议拦截、崩溃状态已经有核心链路。
 - 硬件指纹 v2 模型已经落到 `electron/services/fingerprint/model.ts`，并通过 `fingerprintRuntime` 接入 CDP/Accept-Language/UA metadata。
-- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 已有实验开关，浏览器级冒烟已覆盖双路径，下载文件定位和用户可调 zoom 已补。
+- 还没有完成“真正可用浏览器”的全部收口：WebContentsView 已有实验开关，浏览器级冒烟已覆盖双路径，下载文件定位和用户可调 zoom 已补；网页承载层仍需要重新收口，确保网页只能出现在中间框内。
 
-当前推荐下一步：补下载失败原因和代理/证书错误入口，让浏览器失败状态更接近真实可用产品。
+当前推荐下一步：先修网页承载层越界问题，不要继续在 BrowserView 上打补丁。用户明确要求网页必须单独隔离，只能在中间框中，右侧栏展开/收起时中间网页必须跟着缩放且绝不越界。
 
 ## 基本信息
 
@@ -19,6 +19,7 @@
 - 当前分支：`codex/fingerprint-model-spec`
 - 当前版本：`package.json` 为 `1.0.14`
 - 最新提交：以 `git log --oneline -1` 为准
+- 当前工作区：有未提交实验改动，先看 `git status --short` 和下方“未提交工作区状态”
 - 语言：和用户沟通用中文
 - UI 方向：保持终端像素风，但交互要像正常浏览器
 
@@ -46,6 +47,15 @@ VITE_DEV_SERVER_URL=http://127.0.0.1:5173 ./node_modules/.bin/electron /Users/su
 - `npm run build` 通过
 - `npm run typecheck` 通过
 - `npm run smoke:browser` 通过，覆盖 BrowserView 与 WebContentsView
+
+2026-05-27 晚上未提交工作区额外跑过：
+
+- `npm run test -- tests/browserChromeUi.test.ts`
+- `npm run test -- tests/browserChromeUi.test.ts tests/profileStore.test.ts`
+- `npm run test -- tests/browserChromeUi.test.ts tests/nativeBrowserView.test.ts tests/profileStore.test.ts`
+- `npm run typecheck`
+
+注意：这些只说明当前代码能编译和部分源码约束通过，不代表网页承载层视觉验收通过。截图验收仍显示 `<webview>` 高度/前台窗口干扰等问题没有完全收口。
 
 提交或宣布完成前必须重新跑：
 
@@ -145,6 +155,36 @@ npm run build
 - 移除 native BrowserView 的动态宽度适配调用，避免页面加载或切 tab 后覆盖用户 zoom
 - 保留 `<webview>` 历史 fit 逻辑，后续可单独清理
 
+## 未提交工作区状态
+
+截至 2026-05-27 晚上用户暂停前，`Release v1.0.14` 之后有未提交改动：
+
+- `electron/main.ts`
+  - 增加 `configureChromiumNetworkPrivacy()`，在 app ready 前追加 `disable-ipv6` 和 `force-webrtc-ip-handling-policy=disable_non_proxied_udp`。
+  - 增加 native BrowserView bounds 的 `layoutVersion` 过期保护，尝试丢弃旧尺寸同步。
+- `src/App.tsx`
+  - 删除 profile 前后主动 `hideNativeBrowserView()`，避免旧网页层残留。
+  - 右侧 inspector 展开/收起时先 hide native BrowserView，再延迟同步。
+  - 尝试默认使用 DOM `<webview>` (`USE_DOM_EMBEDDED_WEBVIEW = true`) 取代原生 BrowserView 显示层。
+  - 为 native bounds 增加 `layoutVersion`。
+- `src/styles.css`
+  - 新增 `.embedded-webview`，尝试让 DOM `<webview>` 绝对定位填满 `.native-browser-frame`。
+- `src/types.ts`、`src/nativeBrowserView.ts`
+  - native bounds 增加可选 `layoutVersion`。
+- `src/webview.d.ts`
+  - 为 `<webview>` 类型补 `canGoBack`、`canGoForward`、`goBack`、`goForward`、`reload`。
+- `electron/services/profileStore.ts`
+  - 对损坏的 `profiles.json` 做恢复：备份为 `profiles.json.corrupt` 并返回空 profiles。
+- `tests/browserChromeUi.test.ts`、`tests/profileStore.test.ts`
+  - 增加对应源码约束测试。
+
+这些改动是“处理中状态”，不要直接当完成版提交。尤其是 DOM `<webview>` 切换只是应急方向，明天需要做完整验收和清理：
+
+- 导航状态、地址栏、tab URL/title 回写可能还不完整。
+- `target="_blank"` 内部标签、下载、权限、证书、指纹注入、自测页采集都要重新确认。
+- DOM `<webview>` 不会自动复用现有 `NativeBrowserViewController` 的所有事件链路。
+- 需要决定是彻底切 DOM `<webview>`，还是改用真正可裁剪/层级可控的 WebContentsView 方案。
+
 ## 核心目录
 
 - `src/App.tsx`：主 UI，环境列表、标签栏、地址栏、inspector、自测报告、下载面板、崩溃态。
@@ -218,7 +258,7 @@ npm run build
 
 ### BrowserView 原生层
 
-`BrowserView` 不在 React DOM 树里，会盖住 React 弹窗。当前解决方式：
+`BrowserView` 不在 React DOM 树里，会盖住 React 弹窗和右侧栏。此前解决方式：
 
 - `src/App.tsx` 通过 `isModalOpen` 判断弹窗打开状态。
 - 弹窗打开时调用 `hideNativeBrowserView()`。
@@ -226,6 +266,13 @@ npm run build
 - 弹窗关闭后再显示当前 active tab 对应 view。
 
 WebContentsView adapter 已经有基础，后续切默认后可重新评估层级问题。
+
+2026-05-27 晚上实测结论：
+
+- BrowserView 即使按中间框计算 bounds，也可能在 inspector 展开后继续保持旧宽度，盖住右侧栏。
+- 前端定时同步、hide 后 show、bounds 内缩、layoutVersion 丢旧请求都不足以从根上满足“只能在中间框内”的要求。
+- 用户已经明确不接受继续在 BrowserView 上修边界。
+- 下一步应把网页承载层作为 P0：网页必须作为中间框受控内容存在，框变大/变小，网页跟着变，不能覆盖任何 React UI。
 
 ### 网页缩放
 
@@ -246,36 +293,68 @@ WebContentsView adapter 已经有基础，后续切默认后可重新评估层�
 
 ## 现在最应该做的事
 
-### 1. 下载失败原因展示
+### 1. 网页承载层隔离重构
 
-原因：下载已经能跟踪、取消和定位文件，但失败、被中断、保存路径不可用时，用户需要更明确的原因和下一步动作。
+原因：用户明确要求“中间网页单独隔离，只在中间框中，框放大缩小都必须不越界”。当前 BrowserView 原生层不能可靠满足这个要求。
+
+建议改动：
+
+- `src/App.tsx`
+  - 先把未完成 DOM `<webview>` 方向整理干净，确保 `.native-browser-frame` 是唯一承载容器。
+  - 网页元素必须 `position: absolute; inset: 0` 或等价方式填满中间框，并受 `overflow: hidden` 限制。
+  - inspector 展开/收起、窗口 resize、左侧栏内容变化时网页必须随中间框变化。
+  - 如果 DOM `<webview>` 保留为默认，需要补齐 tab URL/title 回写、内部新标签、下载、权限和指纹注入链路。
+- `electron/main.ts`
+  - 若保留 BrowserView 作为备用，默认不要显示 BrowserView。
+  - 若切 WebContentsView，必须验证它不会盖住 React inspector。
+- `tests/browserChromeUi.test.ts`
+  - 更新测试语义：不再只断言 BrowserView bounds，而是断言默认网页承载层在 DOM 中、受 `.native-browser-frame` 裁剪。
+  - 保留“弹窗/删除 profile 时隐藏原生层”的兼容测试。
+- 新增或扩展浏览器冒烟/截图验收
+  - 用 Playwright/截图或 Electron smoke 覆盖右侧栏展开前后。
+  - 验收截图必须能看出网页没有覆盖 inspector。
+  - 同一页面在右侧栏展开/收起后，网页宽度必须明显变化。
+
+验收标准：
+
+- 网页不覆盖右侧栏、顶部栏、左侧栏、底部状态栏、弹窗。
+- 右侧栏从 34px 展开到 260px 时，中间网页宽度跟着缩小。
+- 右侧栏收起时，中间网页宽度跟着放大。
+- 新建/编辑/设置/代理弹窗出现时网页层不可盖住弹窗。
+- 删除用户后旧网页不会残留。
+- 至少手动截图验收一次，并把结果写进交接或提交说明。
+
+### 2. 下载失败原因展示
+
+原因：下载已经能跟踪、取消、定位文件，但失败、被中断、保存路径不可用时，用户需要更明确的原因和下一步动作。
 
 建议改动：
 
 - `electron/services/downloadController.ts`
-  - 规范 interrupted/cancelled/completed 的错误字段
-  - 记录 Electron download item 的错误状态和路径不可用原因
+  - 规范 interrupted/cancelled/completed 的错误字段。
+  - 记录 Electron download item 的错误状态和路径不可用原因。
 - `src/App.tsx`
-  - 下载面板展示失败原因
-  - “定位”不可用时给出清晰 UI 状态，不只写全局 error
+  - 下载面板展示失败原因。
+  - “定位”不可用时给出清晰 UI 状态，不只写全局 error。
 - `tests/downloadController.test.ts`
-  - 覆盖 interrupted error、缺失保存路径、取消后的展示数据
+  - 覆盖 interrupted error、缺失保存路径、取消后的展示数据。
 - `tests/browserChromeUi.test.ts`
-  - 补下载失败原因 UI 约束
+  - 补下载失败原因 UI 约束。
 
 验收标准：
 
-- interrupted 下载能展示错误原因
-- 用户取消和真实中断能区分
-- 保存路径不可用时 UI 不显示无效定位动作
+- interrupted 下载能展示错误原因。
+- 用户取消和真实中断能区分。
+- 保存路径不可用时 UI 不显示无效定位动作。
 
 ## 中期路线
 
-1. 下载增加失败原因展示。
-2. 代理失败和证书失败在 UI 中做更明确的错误入口。
-3. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
-4. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
-5. 评估何时把 `USE_WEB_CONTENTS_VIEW=1` 从实验开关推进到默认路径。
+1. 网页承载层隔离重构，解决右侧栏遮挡和中间框缩放。
+2. 下载增加失败原因展示。
+3. 代理失败和证书失败在 UI 中做更明确的错误入口。
+4. 清理旧 `<webview>` fit 相关遗留代码：`src/webviewFit.ts` 和对应测试目前主要是历史保护。
+5. 为真实网站登录、Cookie 隔离、localStorage/sessionStorage 隔离补端到端验收。
+6. 评估何时把 `USE_WEB_CONTENTS_VIEW=1` 从实验开关推进到默认路径，或完全移除 BrowserView 默认路径。
 
 ## 开发规则
 
@@ -292,8 +371,10 @@ WebContentsView adapter 已经有基础，后续切默认后可重新评估层�
 
 后续从这里继续时，推荐按下面顺序提交：
 
-1. `Add browser zoom setting`
-2. `Show download failure reasons`
+1. `Fix embedded browser containment`
+2. `Recover corrupted profile database`
+3. `Disable IPv6 for embedded Chromium`
+4. `Show download failure reasons`
 
 ## 快速接手命令
 
@@ -305,10 +386,18 @@ npm run test
 npm run build
 ```
 
-如果只做当前下一步的浏览器 zoom，先跑相关测试：
+如果只做当前 P0 网页承载层，先跑相关测试：
 
 ```bash
-npm run test -- tests/browserChromeUi.test.ts tests/settingsStore.test.ts
+npm run test -- tests/browserChromeUi.test.ts tests/profileStore.test.ts
+npm run typecheck
+```
+
+启动前如果 5173 被旧 Vite 占用：
+
+```bash
+lsof -ti tcp:5173
+kill <pid>
 ```
 
 ## 用户明确要求
@@ -322,3 +411,5 @@ npm run test -- tests/browserChromeUi.test.ts tests/settingsStore.test.ts
 - 标签切换时地址栏要跟着变。
 - 新建/编辑弹窗不能被网页挡住。
 - 网页不要加载后动态缩放跳动，当前固定 1 倍缩放。
+- 网页必须只显示在中间框内；右侧栏展开/收起时，中间网页必须跟随中间框缩放，不能越界。
+- 不要继续让用户反复验证 BrowserView 边界问题；先由开发者截图确认。

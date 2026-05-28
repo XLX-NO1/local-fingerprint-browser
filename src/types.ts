@@ -145,6 +145,17 @@ export interface AppSettings {
   chromiumPath?: string;
   detectedChromiumPath?: string;
   browserZoomFactor?: number;
+  disableIpv6?: boolean;
+}
+
+export interface EmbeddedWebviewNavigationInput {
+  url?: string;
+  title?: string;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  isLoading?: boolean;
+  crashed?: boolean;
+  lastError?: string;
 }
 
 export interface AppApi {
@@ -161,9 +172,13 @@ export interface AppApi {
   activateProfileTab(id: string, tabId: string): Promise<BrowserProfile>;
   closeProfileTab(id: string, tabId: string): Promise<BrowserProfile>;
   toggleProfileBookmark(id: string): Promise<BrowserProfile>;
+  prepareEmbeddedWebview(profileId: string): Promise<void>;
+  updateEmbeddedWebviewNavigation(profileId: string, tabId: string, input: EmbeddedWebviewNavigationInput): Promise<BrowserProfile>;
+  openEmbeddedWebviewPopup(profileId: string, url: string): Promise<BrowserProfile | undefined>;
+  validateEmbeddedWebviewNavigation(url: string): Promise<{ action: 'allow' | 'block'; reason?: string }>;
   fitEmbeddedWebview(webContentsId: number, viewport: { width: number; height: number }): Promise<number>;
-  showNativeBrowserView(profileId: string, tabId: string, url: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
-  resizeNativeBrowserView(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+  showNativeBrowserView(profileId: string, tabId: string, url: string, bounds: { x: number; y: number; width: number; height: number; layoutVersion?: number }): Promise<void>;
+  resizeNativeBrowserView(bounds: { x: number; y: number; width: number; height: number; layoutVersion?: number }): Promise<void>;
   hideNativeBrowserView(): Promise<void>;
   getNativeBrowserNavigationState(profileId: string, tabId: string): Promise<BrowserNavigationState | undefined>;
   listDownloads(profileId?: string): Promise<DownloadRecord[]>;

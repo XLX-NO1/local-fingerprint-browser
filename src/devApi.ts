@@ -1,6 +1,6 @@
-import type { AppApi, BrowserProfile, CreateProfileInput, DownloadRecord, LaunchResult, ProfileHistoryEvent, UpdateProfileInput } from './types';
+import type { AppApi, BrowserProfile, CreateProfileInput, DownloadRecord, EmbeddedWebviewNavigationInput, LaunchResult, ProfileHistoryEvent, UpdateProfileInput } from './types';
 import { parseProxyInput } from './proxyInput';
-import { activateTabInProfile, closeTabInProfile, createBlankTab, openTabInProfile, toggleBookmarkInProfile } from './browserWorkspace';
+import { activateTabInProfile, closeTabInProfile, createBlankTab, openTabInProfile, openUrlInNewTab, toggleBookmarkInProfile, updateTabMetadataInProfile, updateTabRuntimeStateInProfile } from './browserWorkspace';
 
 export function installDevApi(): void {
   if (window.api) {
@@ -10,6 +10,7 @@ export function installDevApi(): void {
   let profiles: BrowserProfile[] = [];
   let chromiumPath = '';
   let browserZoomFactor = 1;
+  let disableIpv6 = true;
   const downloads: DownloadRecord[] = [];
 
   const api: AppApi = {
@@ -176,6 +177,40 @@ export function installDevApi(): void {
       if (!existing) throw new Error(`Profile not found: ${id}`);
       return api.updateProfile(id, toggleBookmarkInProfile(existing));
     },
+    async prepareEmbeddedWebview() {},
+    async updateEmbeddedWebviewNavigation(profileId: string, tabId: string, input: EmbeddedWebviewNavigationInput) {
+      const existing = profiles.find((profile) => profile.id === profileId);
+      if (!existing) throw new Error(`Profile not found: ${profileId}`);
+      const withMetadata = updateTabMetadataInProfile(existing, tabId, { url: input.url, title: input.title });
+      const withRuntime = updateTabRuntimeStateInProfile(withMetadata, tabId, {
+        canGoBack: input.canGoBack ?? false,
+        canGoForward: input.canGoForward ?? false,
+        isLoading: input.isLoading ?? false,
+        crashed: input.crashed ?? false,
+        lastError: input.lastError,
+      });
+      return api.updateProfile(profileId, {
+        tabs: withRuntime.tabs,
+        activeTabId: withRuntime.activeTabId,
+        lastOpenedUrl: withRuntime.lastOpenedUrl,
+        lastError: input.lastError,
+      });
+    },
+    async openEmbeddedWebviewPopup(profileId: string, url: string) {
+      const existing = profiles.find((profile) => profile.id === profileId);
+      if (!existing) throw new Error(`Profile not found: ${profileId}`);
+      return api.updateProfile(profileId, openUrlInNewTab(existing, url));
+    },
+    async validateEmbeddedWebviewNavigation(url: string) {
+      try {
+        const protocol = new URL(url).protocol;
+        return protocol === 'http:' || protocol === 'https:' || protocol === 'file:'
+          ? { action: 'allow' as const }
+          : { action: 'block' as const, reason: `Blocked external protocol: ${protocol.replace(':', '')}` };
+      } catch {
+        return { action: 'block' as const, reason: `Blocked invalid URL: ${url}` };
+      }
+    },
     async fitEmbeddedWebview() {
       return 1;
     },
@@ -222,12 +257,13 @@ export function installDevApi(): void {
       });
     },
     async getSettings() {
-      return { chromiumPath, browserZoomFactor, detectedChromiumPath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' };
+      return { chromiumPath, browserZoomFactor, disableIpv6, detectedChromiumPath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' };
     },
     async updateSettings(input) {
       chromiumPath = input.chromiumPath ?? '';
       browserZoomFactor = input.browserZoomFactor ?? 1;
-      return { chromiumPath, browserZoomFactor };
+      disableIpv6 = input.disableIpv6 ?? true;
+      return { chromiumPath, browserZoomFactor, disableIpv6 };
     },
   };
 

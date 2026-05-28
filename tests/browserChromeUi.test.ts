@@ -31,18 +31,71 @@ describe('browser chrome UI', () => {
 
   it('clips normal native BrowserView bounds to the main workspace', () => {
     expect(appSource).toContain('mainRef');
-    expect(appSource).toContain('Math.min(rect.right, mainRect.right)');
+    expect(appSource).toContain('inspectorRef');
+    expect(appSource).toContain('USE_DOM_EMBEDDED_WEBVIEW');
+    expect(appSource).toContain('<webview');
+    expect(appSource).toContain('embeddedPartitionForProfile(selected.id)');
+    expect(styles).toContain('.embedded-webview');
+    const embeddedWebviewStyles = styles.slice(
+      styles.indexOf('.embedded-webview'),
+      styles.indexOf('.native-browser-hint'),
+    );
+    expect(styles).toContain('grid-template-rows: minmax(0, 1fr);');
+    expect(embeddedWebviewStyles).toContain('width: 100% !important;');
+    expect(embeddedWebviewStyles).toContain('height: 100% !important;');
+    expect(embeddedWebviewStyles).not.toContain('width: auto;');
+    expect(embeddedWebviewStyles).not.toContain('height: auto;');
+    expect(appSource).toContain("style={{ width: '100%', height: '100%' }}");
+    expect(appSource).toContain('const frameWidth = frame.clientWidth;');
+    expect(appSource).toContain('const frameHeight = frame.clientHeight;');
+    expect(appSource).toContain('layoutVersion,');
+    expect(appSource).toContain('const inspectorLeft = inspectorRect && inspectorRect.width > 0 ? inspectorRect.left : mainRect.right;');
+    expect(appSource).toContain('Math.min(frameWidth, mainRect.right - rect.left, inspectorLeft - rect.left)');
+    expect(appSource).toContain('x: rect.left + 1');
+    expect(appSource).toContain('width: Math.max(0, visibleWidth - 2)');
     expect(appSource).toContain('Math.min(rect.bottom, mainRect.bottom)');
   });
 
   it('resyncs the native BrowserView after inspector and profile layout changes settle', () => {
     expect(appSource).toContain('scheduleNativeBrowserViewSync');
+    expect(appSource).toContain('clearScheduledNativeBrowserViewSync');
     expect(appSource).toContain('requestAnimationFrame');
-    expect(appSource).toContain('window.setTimeout(syncNativeBrowserView, 80)');
-    expect(appSource).toContain('window.setTimeout(syncNativeBrowserView, 240)');
+    expect(appSource).toContain('window.setTimeout(() => syncNativeBrowserView(layoutVersion), 80)');
+    expect(appSource).toContain('window.setTimeout(() => syncNativeBrowserView(layoutVersion), 240)');
     expect(appSource).toContain('window.visualViewport?.addEventListener');
     expect(appSource).toContain('isInspectorCollapsed');
     expect(appSource).toContain('selected?.fingerprint.id');
+  });
+
+  it('hides the native BrowserView before toggling the inspector width', () => {
+    const toggleHandler = appSource.slice(
+      appSource.indexOf('function toggleInspector'),
+      appSource.indexOf('async function loadSettings'),
+    );
+
+    expect(toggleHandler).toContain('window.api.hideNativeBrowserView?.();');
+    expect(toggleHandler).toContain('setIsInspectorCollapsed');
+    expect(toggleHandler).toContain('clearScheduledNativeBrowserViewSync();');
+    expect(toggleHandler).toContain('window.setTimeout(scheduleNativeBrowserViewSync, 260);');
+    expect(appSource).toContain('onClick={toggleInspector}');
+  });
+
+  it('rejects stale native BrowserView bounds in the main process', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const showHandler = mainSource.slice(
+      mainSource.indexOf("ipcMain.handle('native-browser:show'"),
+      mainSource.indexOf("ipcMain.handle('native-browser:resize'"),
+    );
+    const resizeHandler = mainSource.slice(
+      mainSource.indexOf("ipcMain.handle('native-browser:resize'"),
+      mainSource.indexOf("ipcMain.handle('native-browser:hide'"),
+    );
+
+    expect(mainSource).toContain('let nativeBrowserLayoutVersion = 0;');
+    expect(mainSource).toContain('function shouldIgnoreStaleNativeBrowserBounds');
+    expect(mainSource).toContain('layoutVersion < nativeBrowserLayoutVersion');
+    expect(showHandler).toContain('shouldIgnoreStaleNativeBrowserBounds(bounds)');
+    expect(resizeHandler).toContain('shouldIgnoreStaleNativeBrowserBounds(bounds)');
   });
 
   it('does not render fingerprint self-test pages in the native BrowserView layer', () => {
@@ -73,6 +126,17 @@ describe('browser chrome UI', () => {
     expect(regenerateHandler.indexOf('await window.api.hideNativeBrowserView?.();')).toBeLessThan(regenerateHandler.indexOf('regenerateProfileFingerprint'));
   });
 
+  it('hides the native BrowserView before and after deleting a profile', () => {
+    const removeHandler = appSource.slice(
+      appSource.indexOf('async function remove'),
+      appSource.indexOf('async function duplicate'),
+    );
+
+    expect(removeHandler.indexOf('await window.api.hideNativeBrowserView?.();')).toBeGreaterThan(-1);
+    expect(removeHandler.indexOf('await window.api.hideNativeBrowserView?.();')).toBeLessThan(removeHandler.indexOf('await window.api.deleteProfile(profile.id);'));
+    expect(removeHandler.lastIndexOf('await window.api.hideNativeBrowserView?.();')).toBeGreaterThan(removeHandler.indexOf('await refreshProfiles();'));
+  });
+
   it('uses simple native BrowserView bounds attachment in the main process', () => {
     const mainSource = readFileSync('electron/main.ts', 'utf8');
     const showHandler = mainSource.slice(
@@ -99,6 +163,20 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain('BrowserViewPageHost');
     expect(mainSource).toContain('new WebContentsView');
     expect(mainSource).toContain('new BrowserView');
+  });
+
+  it('disables IPv6 before Chromium networking starts', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const commandLineSetup = mainSource.slice(
+      mainSource.indexOf('function configureChromiumNetworkPrivacy'),
+      mainSource.indexOf('let mainWindow'),
+    );
+
+    expect(mainSource.indexOf('configureChromiumNetworkPrivacy();')).toBeLessThan(mainSource.indexOf('app.whenReady()'));
+    expect(commandLineSetup).toContain('readStartupDisableIpv6(appDataDir)');
+    expect(commandLineSetup).toContain('if (disableIpv6)');
+    expect(commandLineSetup).toContain("app.commandLine.appendSwitch('disable-ipv6');");
+    expect(commandLineSetup).toContain("app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');");
   });
 
   it('applies a fixed user browser zoom instead of dynamic page fitting', () => {
@@ -131,14 +209,65 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('BROWSER_ZOOM_OPTIONS');
     expect(appSource).toContain('browserZoomFactor');
     expect(appSource).toContain('页面缩放');
+    expect(appSource).toContain('disableIpv6');
+    expect(appSource).toContain('禁用 IPv6');
     expect(appSource).toContain('80%');
     expect(appSource).toContain('90%');
     expect(appSource).toContain('100%');
     expect(appSource).toContain('110%');
     expect(appSource).toContain('125%');
     expect(mainSource).toContain('settings.browserZoomFactor');
+    expect(mainSource).toContain('readStartupDisableIpv6');
     expect(preloadSource).toContain('updateSettings: (input: AppSettings)');
     expect(typesSource).toContain('browserZoomFactor?: number;');
+    expect(typesSource).toContain('disableIpv6?: boolean;');
+  });
+
+  it('prepares DOM webviews with the fingerprint preload before attachment', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const embeddedSessionSource = readFileSync('electron/services/embeddedSession.ts', 'utf8');
+    const attachHandler = mainSource.slice(
+      mainSource.indexOf("mainWindow.webContents.on('will-attach-webview'"),
+      mainSource.indexOf("mainWindow as BrowserWindow", mainSource.indexOf("mainWindow.webContents.on('will-attach-webview'")),
+    );
+
+    expect(mainSource).toContain('const embeddedWebviewPreloads = new Map<string, string>();');
+    expect(mainSource).toContain('async function prepareEmbeddedWebviewProfile');
+    expect(mainSource).toContain('embeddedWebviewPreloads.set(profile.id, preloadPath);');
+    expect(mainSource).toContain("ipcMain.handle('embedded-webview:prepare'");
+    expect(appSource).toContain('prepareEmbeddedWebview(selected.id)');
+    expect(appSource).toContain('preparedEmbeddedProfileId !== selected.id');
+    expect(appSource).toContain('useragent={selected.fingerprint.userAgent}');
+    expect(embeddedSessionSource).toContain('profileSession.setUserAgent(profile.fingerprint.userAgent');
+    expect(attachHandler).toContain('profileIdFromEmbeddedPartition');
+    expect(attachHandler).toContain('webPreferences.preload = preload;');
+    expect(attachHandler).not.toContain('delete webPreferences.preload');
+  });
+
+  it('syncs DOM webview navigation and popups back into profiles', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const preloadSource = readFileSync('electron/preload.ts', 'utf8');
+
+    expect(mainSource).toContain("ipcMain.handle('embedded-webview:navigation'");
+    expect(mainSource).toContain('updateEmbeddedWebviewProfileNavigation');
+    expect(mainSource).toContain("ipcMain.handle('embedded-webview:open-popup'");
+    expect(mainSource).toContain('openUrlInNewTab(profile, rawUrl)');
+    expect(preloadSource).toContain('updateEmbeddedWebviewNavigation');
+    expect(preloadSource).toContain('openEmbeddedWebviewPopup');
+    expect(appSource).toContain("webview.addEventListener('did-navigate'");
+    expect(appSource).toContain("webview.addEventListener('page-title-updated'");
+    expect(appSource).toContain("webview.addEventListener('new-window'");
+    expect(appSource).toContain('if (!isEditingUrl) {');
+    expect(appSource).toContain('setOpenUrl(next.url);');
+    expect(appSource).toContain('updateEmbeddedWebviewNavigation(selected.id, selectedTabId, next)');
+    expect(appSource).toContain('openEmbeddedWebviewPopup(selected.id, url)');
+  });
+
+  it('does not call DOM webview navigation methods before they are ready', () => {
+    expect(appSource).toContain('const safeWebviewCall');
+    expect(appSource).toContain("webview.addEventListener('dom-ready', onNavigate)");
+    expect(appSource).not.toContain("webview.addEventListener('crashed', onCrashed);\n    persistNavigationState();");
+    expect(appSource).toContain('The webview navigation API throws before dom-ready.');
   });
 
   it('attaches native BrowserView event handlers only once per view instance', () => {

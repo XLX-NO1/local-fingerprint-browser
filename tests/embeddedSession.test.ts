@@ -19,6 +19,7 @@ describe('configureProfileSession', () => {
     });
 
     expect(session.setProxy).toHaveBeenCalledTimes(2);
+    expect(session.setUserAgent).toHaveBeenLastCalledWith(profile.fingerprint.userAgent, 'ja-JP,ja;q=0.9,en-US;q=0.8');
     expect(session.webRequest.onBeforeSendHeaders).toHaveBeenCalledTimes(1);
 
     const handler = session.webRequest.onBeforeSendHeaders.mock.calls[0][0];
@@ -37,6 +38,7 @@ describe('configureProfileSession', () => {
 function makeSession() {
   return {
     setProxy: vi.fn(async () => undefined),
+    setUserAgent: vi.fn(),
     setPermissionRequestHandler: vi.fn(),
     webRequest: {
       onBeforeSendHeaders: vi.fn(),

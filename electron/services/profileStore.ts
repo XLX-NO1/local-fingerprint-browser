@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import type { BrowserProfile, CreateProfileInput, ProfileHistoryEvent, UpdateProfileInput } from '../../src/types';
@@ -201,6 +201,11 @@ export class ProfileStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return { profiles: [] };
+      }
+      if (error instanceof SyntaxError) {
+        const backupPath = `${this.filePath}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        await rename(this.filePath, backupPath);
+        throw new Error(`Profile database is corrupted. Backed up to ${backupPath}.`);
       }
       throw error;
     }

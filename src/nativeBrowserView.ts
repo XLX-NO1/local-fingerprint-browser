@@ -3,6 +3,7 @@ import type { FitSize } from './webviewFit';
 export type BrowserViewBounds = FitSize & {
   x: number;
   y: number;
+  layoutVersion?: number;
 };
 
 export function cssRectToBrowserViewBounds(rect: BrowserViewBounds, scaleFactor = 1): BrowserViewBounds {

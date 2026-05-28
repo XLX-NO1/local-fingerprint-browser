@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -194,5 +194,14 @@ describe('ProfileStore', () => {
       lastError: 'Previous browser process is no longer managed by this app session.',
     });
     expect(reconciled[0].history?.at(-1)).toMatchObject({ type: 'error', message: 'runtime state reconciled after app restart' });
+  });
+
+  it('backs up corrupted profile databases without silently returning an empty list', async () => {
+    await writeFile(join(dir, 'profiles.json'), '{', 'utf8');
+
+    await expect(store.list()).rejects.toThrow('Profile database is corrupted');
+    const backup = (await readdir(dir)).find((file) => file.startsWith('profiles.json.corrupt-'));
+    expect(backup).toBeTruthy();
+    await expect(readFile(join(dir, backup ?? ''), 'utf8')).resolves.toBe('{');
   });
 });

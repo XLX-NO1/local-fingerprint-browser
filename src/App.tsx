@@ -3,7 +3,7 @@ import type { BrowserNavigationState, BrowserProfile, CreateProfileInput, Downlo
 import { formatProxyInput, parseProxyInput } from './proxyInput';
 import { filterProfiles, type ProfileGroupFilter } from './profileFilters';
 import { buildSelfTestChecklist } from './selfTestReport';
-import { profileAddressBarUrl } from './embeddedBrowser';
+import { embeddedPartitionForProfile, profileAddressBarUrl } from './embeddedBrowser';
 import { buildDeviceProfileRows } from './deviceProfile';
 import { applyFingerprintRegionPreset, applyFingerprintOsPreset, fingerprintToForm, formToFingerprint, hasFingerprintFormChanges, type FingerprintFormState } from './fingerprintEditor';
 import { generateLocalFingerprint } from './localFingerprint';
@@ -15,6 +15,7 @@ const DEFAULT_PROFILE_COLOR = PROFILE_COLORS[0];
 const DEFAULT_REGION = 'US';
 const DEFAULT_CREATE_FINGERPRINT = generateFingerprintForRegion(DEFAULT_REGION, 'create-profile-default');
 const DEFAULT_FORM_FINGERPRINT = fingerprintToForm(DEFAULT_CREATE_FINGERPRINT);
+const USE_DOM_EMBEDDED_WEBVIEW = true;
 const BROWSER_ZOOM_OPTIONS = [
   { label: '80%', value: 0.8 },
   { label: '90%', value: 0.9 },
@@ -36,6 +37,7 @@ export default function App() {
   const [chromiumPath, setChromiumPath] = useState('');
   const [detectedChromiumPath, setDetectedChromiumPath] = useState('');
   const [browserZoomFactor, setBrowserZoomFactor] = useState(1);
+  const [disableIpv6, setDisableIpv6] = useState(true);
   const [query, setQuery] = useState('');
   const [activeGroup, setActiveGroup] = useState<ProfileGroupFilter>('ALL');
   const [openUrl, setOpenUrl] = useState('https://example.com');
@@ -45,7 +47,11 @@ export default function App() {
   const [proxyFormUrl, setProxyFormUrl] = useState('');
   const [selectedRegion, setSelectedRegion] = useState(DEFAULT_REGION);
   const mainRef = useRef<HTMLElement | null>(null);
+  const inspectorRef = useRef<HTMLElement | null>(null);
   const nativeBrowserFrameRef = useRef<HTMLDivElement | null>(null);
+  const embeddedWebviewRef = useRef<JSX.ElectronWebviewElement | null>(null);
+  const nativeBrowserSyncTimersRef = useRef<{ frame?: number; timer?: number; lateTimer?: number }>({});
+  const nativeBrowserLayoutVersionRef = useRef(0);
   const proxyInputRef = useRef<HTMLInputElement | null>(null);
   const [form, setForm] = useState<CreateProfileInput>({
     name: 'us-store-01',
@@ -55,6 +61,7 @@ export default function App() {
     proxyUrl: '',
   });
   const [fingerprint, setFingerprint] = useState<FingerprintFormState>(DEFAULT_FORM_FINGERPRINT);
+  const [preparedEmbeddedProfileId, setPreparedEmbeddedProfileId] = useState<string>();
 
   const selected = useMemo(
     () => profiles.find((profile) => profile.id === selectedId) ?? profiles[0],
@@ -126,6 +133,146 @@ export default function App() {
   }, [selected?.id, selectedTabId, selected?.lastOpenedUrl, selected?.tabs]);
 
   useEffect(() => {
+    if (!USE_DOM_EMBEDDED_WEBVIEW || !selected?.id || isSelfTestView) {
+      setPreparedEmbeddedProfileId(undefined);
+      return undefined;
+    }
+    let cancelled = false;
+    setPreparedEmbeddedProfileId(undefined);
+    void window.api.prepareEmbeddedWebview(selected.id)
+      .then(() => {
+        if (!cancelled) {
+          setPreparedEmbeddedProfileId(selected.id);
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setError(toMessage(caught));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSelfTestView, selected?.fingerprint.id, selected?.id, selected?.proxy?.id]);
+
+  useEffect(() => {
+    if (!USE_DOM_EMBEDDED_WEBVIEW || !selected?.id || !selectedTabId || preparedEmbeddedProfileId !== selected.id) {
+      return undefined;
+    }
+    const webview = embeddedWebviewRef.current;
+    if (!webview) {
+      return undefined;
+    }
+
+    let metadataTimer: number | undefined;
+    const safeWebviewCall = <T,>(read: () => T, fallback: T): T => {
+      try {
+        return read();
+      } catch {
+        return fallback;
+      }
+    };
+    const readNavigationState = (overrides: Partial<BrowserNavigationState> = {}) => ({
+      url: overrides.url ?? safeWebviewCall(() => webview.getURL(), selected.lastOpenedUrl ?? 'about:blank'),
+      title: overrides.title ?? safeWebviewCall(() => webview.getTitle(), selectedTab?.title ?? selected.lastOpenedUrl ?? 'about:blank'),
+      canGoBack: overrides.canGoBack ?? safeWebviewCall(() => webview.canGoBack(), false),
+      canGoForward: overrides.canGoForward ?? safeWebviewCall(() => webview.canGoForward(), false),
+      isLoading: overrides.isLoading ?? false,
+      crashed: overrides.crashed ?? false,
+      lastError: overrides.lastError,
+    });
+    const persistNavigationState = (overrides: Partial<BrowserNavigationState> = {}) => {
+      const next = readNavigationState(overrides);
+      setNavigationState({
+        profileId: selected.id,
+        tabId: selectedTabId,
+        ...next,
+      });
+      if (!isEditingUrl) {
+        setOpenUrl(next.url);
+      }
+      if (metadataTimer !== undefined) {
+        window.clearTimeout(metadataTimer);
+      }
+      metadataTimer = window.setTimeout(() => {
+        void window.api.updateEmbeddedWebviewNavigation(selected.id, selectedTabId, next).catch((caught) => setError(toMessage(caught)));
+      }, 80);
+    };
+    const persistNow = (overrides: Partial<BrowserNavigationState> = {}) => {
+      const next = readNavigationState(overrides);
+      setNavigationState({
+        profileId: selected.id,
+        tabId: selectedTabId,
+        ...next,
+      });
+      if (!isEditingUrl) {
+        setOpenUrl(next.url);
+      }
+      void window.api.updateEmbeddedWebviewNavigation(selected.id, selectedTabId, next).catch((caught) => setError(toMessage(caught)));
+    };
+    const onWillNavigate = (event: Event) => {
+      const url = (event as Event & { url?: string }).url;
+      if (!url) {
+        return;
+      }
+      if (!isAllowedEmbeddedNavigationUrl(url)) {
+        event.preventDefault();
+        persistNow({ lastError: `Blocked navigation: ${url}`, isLoading: false });
+      }
+    };
+    const onNewWindow = (event: Event) => {
+      event.preventDefault();
+      const url = (event as Event & { url?: string }).url;
+      if (url) {
+        void window.api.openEmbeddedWebviewPopup(selected.id, url).catch((caught) => setError(toMessage(caught)));
+      }
+    };
+    const onStartLoading = () => persistNavigationState({ isLoading: true, crashed: false, lastError: undefined });
+    const onStopLoading = () => persistNavigationState({ isLoading: false });
+    const onNavigate = () => persistNavigationState();
+    const onTitle = () => persistNavigationState();
+    const onFailLoad = (event: Event) => {
+      const details = event as Event & { errorDescription?: string; validatedURL?: string; isMainFrame?: boolean };
+      if (details.isMainFrame === false) {
+        return;
+      }
+      persistNow({
+        url: details.validatedURL || safeWebviewCall(() => webview.getURL(), selected.lastOpenedUrl ?? 'about:blank'),
+        isLoading: false,
+        lastError: details.errorDescription,
+      });
+    };
+    const onCrashed = () => persistNow({ crashed: true, isLoading: false, lastError: 'Embedded webview crashed.' });
+
+    webview.addEventListener('will-navigate', onWillNavigate);
+    webview.addEventListener('new-window', onNewWindow);
+    webview.addEventListener('did-start-loading', onStartLoading);
+    webview.addEventListener('did-stop-loading', onStopLoading);
+    webview.addEventListener('did-navigate', onNavigate);
+    webview.addEventListener('did-navigate-in-page', onNavigate);
+    webview.addEventListener('page-title-updated', onTitle);
+    webview.addEventListener('did-fail-load', onFailLoad);
+    webview.addEventListener('crashed', onCrashed);
+    webview.addEventListener('dom-ready', onNavigate);
+
+    return () => {
+      if (metadataTimer !== undefined) {
+        window.clearTimeout(metadataTimer);
+      }
+      webview.removeEventListener('will-navigate', onWillNavigate);
+      webview.removeEventListener('new-window', onNewWindow);
+      webview.removeEventListener('did-start-loading', onStartLoading);
+      webview.removeEventListener('did-stop-loading', onStopLoading);
+      webview.removeEventListener('did-navigate', onNavigate);
+      webview.removeEventListener('did-navigate-in-page', onNavigate);
+      webview.removeEventListener('page-title-updated', onTitle);
+      webview.removeEventListener('did-fail-load', onFailLoad);
+      webview.removeEventListener('crashed', onCrashed);
+      webview.removeEventListener('dom-ready', onNavigate);
+    };
+  }, [isEditingUrl, preparedEmbeddedProfileId, selected?.id, selected?.lastOpenedUrl, selectedTab?.title, selectedTabId]);
+
+  useEffect(() => {
     void refreshDownloads(selected?.id);
   }, [selected?.id]);
 
@@ -140,33 +287,67 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [isProxyEditorOpen]);
 
-  const syncNativeBrowserView = useCallback(() => {
+  const syncNativeBrowserView = useCallback((layoutVersion = nativeBrowserLayoutVersionRef.current) => {
     const frame = nativeBrowserFrameRef.current;
     const main = mainRef.current;
+    const inspector = inspectorRef.current;
     const tabId = selectedTabId;
-    if (isSelfTestView || !frame || !main || !selected?.lastOpenedUrl || !tabId || isModalOpen) {
+    if (USE_DOM_EMBEDDED_WEBVIEW || isSelfTestView || !frame || !main || !selected?.lastOpenedUrl || !tabId || isModalOpen) {
       void window.api.hideNativeBrowserView?.();
       return;
     }
     const rect = frame.getBoundingClientRect();
     const mainRect = main.getBoundingClientRect();
-    const right = Math.min(rect.right, mainRect.right);
+    const inspectorRect = inspector?.getBoundingClientRect();
+    const inspectorLeft = inspectorRect && inspectorRect.width > 0 ? inspectorRect.left : mainRect.right;
+    const frameWidth = frame.clientWidth;
+    const frameHeight = frame.clientHeight;
+    const visibleWidth = Math.min(frameWidth, mainRect.right - rect.left, inspectorLeft - rect.left);
     const bottom = Math.min(rect.bottom, mainRect.bottom);
-    const bounds = { x: rect.left, y: rect.top, width: Math.max(0, right - rect.left), height: Math.max(0, bottom - rect.top) };
+    const visibleHeight = Math.min(frameHeight, bottom - rect.top);
+    const bounds = {
+      x: rect.left + 1,
+      y: rect.top + 1,
+      width: Math.max(0, visibleWidth - 2),
+      height: Math.max(0, visibleHeight - 2),
+      layoutVersion,
+    };
     void window.api.showNativeBrowserView?.(selected.id, tabId, selected.lastOpenedUrl, bounds);
-  }, [isModalOpen, isSelfTestView, selected?.id, selected?.lastOpenedUrl, selectedTabId]);
+  }, [isInspectorCollapsed, isModalOpen, isSelfTestView, selected?.id, selected?.lastOpenedUrl, selectedTabId]);
+
+  const clearScheduledNativeBrowserViewSync = useCallback(() => {
+    const timers = nativeBrowserSyncTimersRef.current;
+    if (timers.frame !== undefined) {
+      window.cancelAnimationFrame(timers.frame);
+    }
+    if (timers.timer !== undefined) {
+      window.clearTimeout(timers.timer);
+    }
+    if (timers.lateTimer !== undefined) {
+      window.clearTimeout(timers.lateTimer);
+    }
+    nativeBrowserSyncTimersRef.current = {};
+  }, []);
 
   const scheduleNativeBrowserViewSync = useCallback(() => {
-    syncNativeBrowserView();
-    const frame = window.requestAnimationFrame(syncNativeBrowserView);
-    const timer = window.setTimeout(syncNativeBrowserView, 80);
-    const lateTimer = window.setTimeout(syncNativeBrowserView, 240);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-      window.clearTimeout(lateTimer);
+    clearScheduledNativeBrowserViewSync();
+    const layoutVersion = nativeBrowserLayoutVersionRef.current + 1;
+    nativeBrowserLayoutVersionRef.current = layoutVersion;
+    syncNativeBrowserView(layoutVersion);
+    nativeBrowserSyncTimersRef.current = {
+      frame: window.requestAnimationFrame(() => syncNativeBrowserView(layoutVersion)),
+      timer: window.setTimeout(() => syncNativeBrowserView(layoutVersion), 80),
+      lateTimer: window.setTimeout(() => syncNativeBrowserView(layoutVersion), 240),
     };
-  }, [syncNativeBrowserView]);
+    return clearScheduledNativeBrowserViewSync;
+  }, [clearScheduledNativeBrowserViewSync, syncNativeBrowserView]);
+
+  function toggleInspector() {
+    clearScheduledNativeBrowserViewSync();
+    void window.api.hideNativeBrowserView?.();
+    setIsInspectorCollapsed((value) => !value);
+    window.setTimeout(scheduleNativeBrowserViewSync, 260);
+  }
 
   useEffect(() => {
     if (isModalOpen) {
@@ -193,7 +374,9 @@ export default function App() {
     if (!frame) {
       return undefined;
     }
-    const onResize = () => syncNativeBrowserView();
+    const onResize = () => {
+      scheduleNativeBrowserViewSync();
+    };
     const observer = new ResizeObserver(onResize);
     observer.observe(frame);
     window.addEventListener('resize', onResize);
@@ -205,13 +388,14 @@ export default function App() {
       window.visualViewport?.removeEventListener('resize', onResize);
       cancelScheduledSync();
     };
-  }, [isModalOpen, isSelfTestView, scheduleNativeBrowserViewSync, selected?.lastOpenedUrl, syncNativeBrowserView]);
+  }, [isInspectorCollapsed, isModalOpen, isSelfTestView, scheduleNativeBrowserViewSync, selected?.lastOpenedUrl, syncNativeBrowserView]);
 
   async function loadSettings() {
     const settings = await window.api.getSettings();
     setChromiumPath(settings.chromiumPath ?? '');
     setDetectedChromiumPath(settings.detectedChromiumPath ?? '');
     setBrowserZoomFactor(settings.browserZoomFactor ?? 1);
+    setDisableIpv6(settings.disableIpv6 ?? true);
   }
 
   async function refreshProfiles() {
@@ -308,7 +492,7 @@ export default function App() {
 
   async function saveSettings() {
     try {
-      await window.api.updateSettings({ chromiumPath: chromiumPath.trim() || undefined, browserZoomFactor });
+      await window.api.updateSettings({ chromiumPath: chromiumPath.trim() || undefined, browserZoomFactor, disableIpv6 });
       setError(undefined);
     } catch (caught) {
       setError(toMessage(caught));
@@ -373,6 +557,17 @@ export default function App() {
 
   async function goBackNativeBrowserView() {
     try {
+      const embeddedWebview = embeddedWebviewRef.current;
+      if (USE_DOM_EMBEDDED_WEBVIEW && embeddedWebview) {
+        try {
+          if (embeddedWebview.canGoBack()) {
+            embeddedWebview.goBack();
+          }
+        } catch {
+          // The webview navigation API throws before dom-ready.
+        }
+        return;
+      }
       await window.api.goBackNativeBrowserView();
       await refreshProfiles();
     } catch (caught) {
@@ -382,6 +577,17 @@ export default function App() {
 
   async function goForwardNativeBrowserView() {
     try {
+      const embeddedWebview = embeddedWebviewRef.current;
+      if (USE_DOM_EMBEDDED_WEBVIEW && embeddedWebview) {
+        try {
+          if (embeddedWebview.canGoForward()) {
+            embeddedWebview.goForward();
+          }
+        } catch {
+          // The webview navigation API throws before dom-ready.
+        }
+        return;
+      }
       await window.api.goForwardNativeBrowserView();
       await refreshProfiles();
     } catch (caught) {
@@ -392,6 +598,14 @@ export default function App() {
   async function reloadNativeBrowserView(profile: BrowserProfile) {
     try {
       if (profile.lastOpenedUrl) {
+        if (USE_DOM_EMBEDDED_WEBVIEW) {
+          try {
+            embeddedWebviewRef.current?.reload();
+          } catch {
+            return;
+          }
+          return;
+        }
         await window.api.reloadNativeBrowserView();
       } else {
         await openWebsite(profile);
@@ -445,9 +659,11 @@ export default function App() {
 
   async function remove(profile: BrowserProfile) {
     try {
+      await window.api.hideNativeBrowserView?.();
       await window.api.deleteProfile(profile.id);
       setSelectedId(undefined);
       await refreshProfiles();
+      await window.api.hideNativeBrowserView?.();
     } catch (caught) {
       setError(toMessage(caught));
     }
@@ -613,8 +829,22 @@ export default function App() {
               ) : isSelfTestView ? (
                 <SelfTestReportView profile={selected} />
               ) : (
-                <div className="native-browser-frame" ref={nativeBrowserFrameRef}>
-                  <div className="native-browser-hint">CHROMIUM VIEW</div>
+	                <div className="native-browser-frame" ref={nativeBrowserFrameRef}>
+	                  {USE_DOM_EMBEDDED_WEBVIEW && preparedEmbeddedProfileId !== selected.id ? (
+	                    <div className="native-browser-hint">PREPARING WEBVIEW</div>
+	                  ) : USE_DOM_EMBEDDED_WEBVIEW ? (
+	                    <webview
+	                      className="embedded-webview"
+	                      ref={embeddedWebviewRef}
+	                      src={selected.lastOpenedUrl}
+	                      partition={embeddedPartitionForProfile(selected.id)}
+	                      useragent={selected.fingerprint.userAgent}
+	                      style={{ width: '100%', height: '100%' }}
+	                      allowpopups
+	                    />
+                  ) : (
+                    <div className="native-browser-hint">CHROMIUM VIEW</div>
+                  )}
                 </div>
               )
             ) : (
@@ -632,8 +862,8 @@ export default function App() {
         </section>
       </main>
 
-      <aside className="inspector">
-        <button className="inspector-toggle" type="button" onClick={() => setIsInspectorCollapsed((value) => !value)}>
+      <aside className="inspector" ref={inspectorRef}>
+        <button className="inspector-toggle" type="button" onClick={toggleInspector}>
           {isInspectorCollapsed ? '<' : '>'}
         </button>
         {selected ? (
@@ -750,15 +980,19 @@ export default function App() {
               Chrome / Chromium 路径
               <input className="path-input" placeholder="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" value={chromiumPath} onChange={(event) => setChromiumPath(event.target.value)} />
             </label>
-            <label>
-              页面缩放
-              <select value={browserZoomFactor} onChange={(event) => setBrowserZoomFactor(Number(event.target.value))}>
-                {BROWSER_ZOOM_OPTIONS.map((option) => (
-                  <option value={option.value} key={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <div className="trace">detected: {detectedChromiumPath || 'not found'}</div>
+	            <label>
+	              页面缩放
+	              <select value={browserZoomFactor} onChange={(event) => setBrowserZoomFactor(Number(event.target.value))}>
+	                {BROWSER_ZOOM_OPTIONS.map((option) => (
+	                  <option value={option.value} key={option.value}>{option.label}</option>
+	                ))}
+	              </select>
+	            </label>
+	            <label className="checkbox-row">
+	              <input type="checkbox" checked={disableIpv6} onChange={(event) => setDisableIpv6(event.target.checked)} />
+	              禁用 IPv6
+	            </label>
+	            <div className="trace">detected: {detectedChromiumPath || 'not found'}</div>
             <div className="modal-actions">
               <button type="button" onClick={() => setIsSettingsOpen(false)}>
                 取消
@@ -1149,6 +1383,15 @@ function formatUserAgentMetadata(userAgentMetadata?: HardwareRuntimeReport['user
     userAgentMetadata.platformVersion,
     userAgentMetadata.uaFullVersion,
   ].filter(Boolean).join(' · ') || 'unknown';
+}
+
+function isAllowedEmbeddedNavigationUrl(rawUrl: string): boolean {
+  try {
+    const protocol = new URL(rawUrl).protocol;
+    return protocol === 'http:' || protocol === 'https:' || protocol === 'file:';
+  } catch {
+    return false;
+  }
 }
 
 function toMessage(error: unknown): string {

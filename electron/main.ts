@@ -2,7 +2,7 @@ import { app, BrowserView, BrowserWindow, ipcMain, Menu, nativeImage, session, s
 import { join } from 'node:path';
 import { BrowserLauncher, findChromiumPath } from './services/browserLauncher';
 import { ProfileStore } from './services/profileStore';
-import { SettingsStore, normalizeBrowserZoomFactor } from './services/settingsStore';
+import { SettingsStore, normalizeBrowserZoomFactor, readStartupDisableIpv6 } from './services/settingsStore';
 import { DownloadController } from './services/downloadController';
 import { certificateDecisionForError, navigationDecisionForUrl } from './services/navigationPolicy';
 import { checkProxyReachability } from './services/proxy';
@@ -21,7 +21,7 @@ import { BrowserViewPageHost, BrowserViewPageView } from './services/browserView
 import { WebContentsViewPageHost, WebContentsViewPageView } from './services/webContentsViewPageView';
 import { prepareSelfTestPage } from './services/selfTestPage';
 import { buildNativeSelfTestCaptureScript, extractSelfTestReportFromExecutionResult, summarizeSelfTestReport } from './services/selfTestResult';
-import type { AppSettings, BrowserNavigationState, BrowserProfile, CreateProfileInput, UpdateProfileInput } from '../src/types';
+import type { AppSettings, BrowserNavigationState, BrowserProfile, CreateProfileInput, EmbeddedWebviewNavigationInput, UpdateProfileInput } from '../src/types';
 import { normalizeOpenUrl } from '../src/urlInput';
 import {
   activateTabInProfile,
@@ -36,6 +36,22 @@ import {
 import { computeFitPageZoom, measurePageScript, type FitSize } from '../src/webviewFit';
 import { cssRectToBrowserViewBounds, type BrowserViewBounds } from '../src/nativeBrowserView';
 
+if (process.env.ELECTRON_BROWSER_SMOKE_USER_DATA_DIR) {
+  app.setPath('userData', process.env.ELECTRON_BROWSER_SMOKE_USER_DATA_DIR);
+}
+
+const appDataDir = join(app.getPath('userData'), 'app-data');
+const embeddedWebviewPreloads = new Map<string, string>();
+
+function configureChromiumNetworkPrivacy(disableIpv6 = readStartupDisableIpv6(appDataDir)): void {
+  if (disableIpv6) {
+    app.commandLine.appendSwitch('disable-ipv6');
+  }
+  app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
+}
+
+configureChromiumNetworkPrivacy();
+
 let mainWindow: BrowserWindow | undefined;
 let store: ProfileStore;
 let settingsStore: SettingsStore;
@@ -45,14 +61,12 @@ let tray: Tray | undefined;
 let isQuitting = false;
 let nativeBrowserMetadataTimer: NodeJS.Timeout | undefined;
 let nativeBrowserZoomFactor = 1;
+let nativeBrowserLayoutVersion = 0;
 const nativeBrowserHandlerWebContents = new WeakSet<Electron.WebContents>();
 const hiddenSelfTestWindows = new Set<BrowserWindow>();
 const downloadController = new DownloadController();
 const downloadSessionPartitions = new Set<string>();
 const browserPageViewMode = browserPageViewModeFromEnv(process.env);
-if (process.env.ELECTRON_BROWSER_SMOKE_USER_DATA_DIR) {
-  app.setPath('userData', process.env.ELECTRON_BROWSER_SMOKE_USER_DATA_DIR);
-}
 const nativeBrowserController = new NativeBrowserViewController({
   createView: createNativeBrowserPageView,
   prepareProfileSession: configureEmbeddedSession,
@@ -86,11 +100,13 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-    if (!String(params.partition ?? '').startsWith('persist:profile-')) {
+    const profileId = profileIdFromEmbeddedPartition(String(params.partition ?? ''));
+    const preload = profileId ? embeddedWebviewPreloads.get(profileId) : undefined;
+    if (!profileId || !preload) {
       event.preventDefault();
       return;
     }
-    delete webPreferences.preload;
+    webPreferences.preload = preload;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
@@ -203,6 +219,15 @@ function resetNativeBrowserZoom(): void {
   contents.setZoomFactor(nativeBrowserZoomFactor);
 }
 
+function shouldIgnoreStaleNativeBrowserBounds(bounds: BrowserViewBounds): boolean {
+  const layoutVersion = bounds.layoutVersion ?? nativeBrowserLayoutVersion;
+  if (layoutVersion < nativeBrowserLayoutVersion) {
+    return true;
+  }
+  nativeBrowserLayoutVersion = layoutVersion;
+  return false;
+}
+
 function scheduleNativeBrowserMetadataUpdate(view: NativeBrowserViewLike, url?: string): void {
   if (nativeBrowserMetadataTimer) {
     clearTimeout(nativeBrowserMetadataTimer);
@@ -274,6 +299,69 @@ async function openNativeBrowserPopupAsTab(url: string): Promise<void> {
   });
   await store.recordHistory(profile.id, 'launched', `opened new tab ${url}`);
   notifyProfilesChanged();
+}
+
+function profileIdFromEmbeddedPartition(partition: string): string | undefined {
+  const prefix = 'persist:profile-';
+  return partition.startsWith(prefix) ? partition.slice(prefix.length) : undefined;
+}
+
+function embeddedNavigationDecisionForUrl(url: string) {
+  try {
+    return navigationDecisionForUrl(url);
+  } catch {
+    return { action: 'block' as const, reason: `Blocked invalid URL: ${url}` };
+  }
+}
+
+async function prepareEmbeddedWebviewProfile(profile: BrowserProfile): Promise<void> {
+  const preloadPath = await writeEmbeddedFingerprintPreload(profile);
+  embeddedWebviewPreloads.set(profile.id, preloadPath);
+  await configureEmbeddedSession(profile);
+}
+
+function navigationStateFromEmbeddedInput(profile: BrowserProfile, tabId: string, input: EmbeddedWebviewNavigationInput): BrowserNavigationState {
+  const tab = (profile.tabs ?? []).find((item) => item.id === tabId);
+  const url = input.url ?? tab?.url ?? profile.lastOpenedUrl ?? 'about:blank';
+  const title = input.title ?? tab?.title ?? url;
+  return {
+    profileId: profile.id,
+    tabId,
+    url,
+    title,
+    canGoBack: input.canGoBack ?? tab?.canGoBack ?? false,
+    canGoForward: input.canGoForward ?? tab?.canGoForward ?? false,
+    isLoading: input.isLoading ?? tab?.isLoading ?? false,
+    crashed: input.crashed ?? tab?.crashed ?? false,
+    lastError: input.lastError ?? tab?.lastError,
+  };
+}
+
+async function updateEmbeddedWebviewProfileNavigation(
+  profileId: string,
+  tabId: string,
+  input: EmbeddedWebviewNavigationInput,
+): Promise<BrowserProfile> {
+  const profile = await store.get(profileId);
+  const state = navigationStateFromEmbeddedInput(profile, tabId, input);
+  const withMetadata = updateTabMetadataInProfile(profile, tabId, {
+    url: state.url,
+    title: state.title,
+  });
+  const withRuntime = updateTabRuntimeStateInProfile(withMetadata, tabId, {
+    canGoBack: state.canGoBack,
+    canGoForward: state.canGoForward,
+    isLoading: state.isLoading,
+    crashed: state.crashed,
+    lastError: state.lastError,
+  });
+  const updated = await store.update(profileId, {
+    tabs: withRuntime.tabs,
+    activeTabId: withRuntime.activeTabId,
+    lastOpenedUrl: withRuntime.lastOpenedUrl,
+    lastError: state.lastError,
+  });
+  return updated;
 }
 
 function attachNativeBrowserTabHandlers(view: NativeBrowserViewLike): void {
@@ -602,16 +690,33 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
 }
 
 function registerIpc(): void {
-  ipcMain.handle('profiles:list', () => store.list());
-  ipcMain.handle('profiles:create', (_event, input: CreateProfileInput) => store.create(input));
-  ipcMain.handle('profiles:update', (_event, id: string, input: UpdateProfileInput) => store.update(id, input));
-  ipcMain.handle('profiles:duplicate', (_event, id: string) => store.duplicate(id));
+  ipcMain.handle('profiles:list', async () => {
+    const profiles = await store.list();
+    await Promise.all(profiles.map((profile) => prepareEmbeddedWebviewProfile(profile).catch(() => undefined)));
+    return profiles;
+  });
+  ipcMain.handle('profiles:create', async (_event, input: CreateProfileInput) => {
+    const profile = await store.create(input);
+    await prepareEmbeddedWebviewProfile(profile);
+    return profile;
+  });
+  ipcMain.handle('profiles:update', async (_event, id: string, input: UpdateProfileInput) => {
+    const profile = await store.update(id, input);
+    await prepareEmbeddedWebviewProfile(profile);
+    return profile;
+  });
+  ipcMain.handle('profiles:duplicate', async (_event, id: string) => {
+    const profile = await store.duplicate(id);
+    await prepareEmbeddedWebviewProfile(profile);
+    return profile;
+  });
   ipcMain.handle('profiles:delete', async (_event, id: string) => {
     disposeNativeBrowserProfileViews(id);
     await store.delete(id);
   });
   ipcMain.handle('profiles:regenerate-fingerprint', async (_event, id: string) => {
     const updated = await store.regenerateFingerprint(id);
+    await prepareEmbeddedWebviewProfile(updated);
     disposeNativeBrowserProfileViews(id);
     notifyProfilesChanged();
     return updated;
@@ -693,7 +798,7 @@ function registerIpc(): void {
   ipcMain.handle('profiles:open-url', async (_event, id: string, rawUrl: string) => {
     const url = normalizeOpenUrl(rawUrl);
     const profile = await store.get(id);
-    await configureEmbeddedSession(profile);
+    await prepareEmbeddedWebviewProfile(profile);
     const workspace = openTabInProfile(profile, url);
     const updated = await store.update(id, {
       tabs: workspace.tabs,
@@ -708,9 +813,35 @@ function registerIpc(): void {
   ipcMain.handle('profiles:create-tab', async (_event, id: string, rawUrl?: string) => {
     const profile = await store.get(id);
     const updated = createBlankTab(profile, rawUrl || 'about:blank');
-    await configureEmbeddedSession(updated);
+    await prepareEmbeddedWebviewProfile(updated);
     return store.update(id, updated);
   });
+  ipcMain.handle('embedded-webview:prepare', async (_event, profileId: string) => {
+    await prepareEmbeddedWebviewProfile(await store.get(profileId));
+  });
+  ipcMain.handle('embedded-webview:navigation', (_event, profileId: string, tabId: string, input: EmbeddedWebviewNavigationInput) => (
+    updateEmbeddedWebviewProfileNavigation(profileId, tabId, input)
+  ));
+  ipcMain.handle('embedded-webview:open-popup', async (_event, profileId: string, rawUrl: string) => {
+    const decision = embeddedNavigationDecisionForUrl(rawUrl);
+    if (decision.action === 'block') {
+      return updateEmbeddedWebviewProfileNavigation(profileId, (await store.get(profileId)).activeTabId ?? profileId, {
+        lastError: decision.reason,
+      });
+    }
+    const profile = await store.get(profileId);
+    const updatedWorkspace = openUrlInNewTab(profile, rawUrl);
+    const updated = await store.update(profile.id, {
+      tabs: updatedWorkspace.tabs,
+      activeTabId: updatedWorkspace.activeTabId,
+      lastOpenedUrl: updatedWorkspace.lastOpenedUrl,
+      launchTrace: [...(profile.launchTrace ?? []), `embedded new tab ${rawUrl}`].slice(-12),
+    });
+    await store.recordHistory(profile.id, 'launched', `opened new tab ${rawUrl}`);
+    notifyProfilesChanged();
+    return updated;
+  });
+  ipcMain.handle('embedded-webview:validate-navigation', (_event, url: string) => embeddedNavigationDecisionForUrl(url));
   ipcMain.handle('profiles:activate-tab', async (_event, id: string, tabId: string) => {
     const profile = await store.get(id);
     return store.update(id, activateTabInProfile(profile, tabId));
@@ -741,6 +872,9 @@ function registerIpc(): void {
     if (!mainWindow) {
       return;
     }
+    if (shouldIgnoreStaleNativeBrowserBounds(bounds)) {
+      return;
+    }
     const profile = await store.get(profileId);
     const host = currentNativeBrowserHost(mainWindow);
     if (!host) {
@@ -750,6 +884,9 @@ function registerIpc(): void {
     resetNativeBrowserZoom();
   });
   ipcMain.handle('native-browser:resize', (_event, bounds: BrowserViewBounds) => {
+    if (shouldIgnoreStaleNativeBrowserBounds(bounds)) {
+      return;
+    }
     nativeBrowserController.resize(bounds);
     resetNativeBrowserZoom();
   });
@@ -948,11 +1085,12 @@ function isNavigationAbort(caught: unknown): boolean {
 }
 
 app.whenReady().then(async () => {
-  const dataDir = join(app.getPath('userData'), 'app-data');
   extensionDir = join(app.getAppPath(), 'fingerprint-extension');
-  store = new ProfileStore(dataDir);
-  await store.reconcileRuntimeState();
-  settingsStore = new SettingsStore(dataDir);
+  store = new ProfileStore(appDataDir);
+  await store.reconcileRuntimeState().catch((error: unknown) => {
+    console.error(`profile startup recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  settingsStore = new SettingsStore(appDataDir);
   const settings = await settingsStore.get();
   nativeBrowserZoomFactor = normalizeBrowserZoomFactor(settings.browserZoomFactor);
   const chromiumPath = settings.chromiumPath || findChromiumPath();

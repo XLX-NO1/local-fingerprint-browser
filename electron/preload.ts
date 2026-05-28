@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppApi, AppSettings, BrowserNavigationState, BrowserProfile, CreateProfileInput, DownloadRecord, LaunchResult, UpdateProfileInput } from '../src/types';
+import type { AppApi, AppSettings, BrowserNavigationState, BrowserProfile, CreateProfileInput, DownloadRecord, EmbeddedWebviewNavigationInput, LaunchResult, UpdateProfileInput } from '../src/types';
 
 const api: AppApi = {
   listProfiles: () => ipcRenderer.invoke('profiles:list') as Promise<BrowserProfile[]>,
@@ -15,6 +15,10 @@ const api: AppApi = {
   activateProfileTab: (id: string, tabId: string) => ipcRenderer.invoke('profiles:activate-tab', id, tabId) as Promise<BrowserProfile>,
   closeProfileTab: (id: string, tabId: string) => ipcRenderer.invoke('profiles:close-tab', id, tabId) as Promise<BrowserProfile>,
   toggleProfileBookmark: (id: string) => ipcRenderer.invoke('profiles:toggle-bookmark', id) as Promise<BrowserProfile>,
+  prepareEmbeddedWebview: (profileId: string) => ipcRenderer.invoke('embedded-webview:prepare', profileId) as Promise<void>,
+  updateEmbeddedWebviewNavigation: (profileId: string, tabId: string, input: EmbeddedWebviewNavigationInput) => ipcRenderer.invoke('embedded-webview:navigation', profileId, tabId, input) as Promise<BrowserProfile>,
+  openEmbeddedWebviewPopup: (profileId: string, url: string) => ipcRenderer.invoke('embedded-webview:open-popup', profileId, url) as Promise<BrowserProfile | undefined>,
+  validateEmbeddedWebviewNavigation: (url: string) => ipcRenderer.invoke('embedded-webview:validate-navigation', url) as Promise<{ action: 'allow' | 'block'; reason?: string }>,
   fitEmbeddedWebview: (webContentsId: number, viewport: { width: number; height: number }) => ipcRenderer.invoke('webview:fit-page', webContentsId, viewport) as Promise<number>,
   showNativeBrowserView: (profileId: string, tabId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('native-browser:show', profileId, tabId, url, bounds) as Promise<void>,
   resizeNativeBrowserView: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('native-browser:resize', bounds) as Promise<void>,

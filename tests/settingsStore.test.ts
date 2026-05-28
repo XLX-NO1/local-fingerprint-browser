@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SettingsStore } from '../electron/services/settingsStore';
+import { readStartupDisableIpv6, SettingsStore } from '../electron/services/settingsStore';
 
 let dir: string;
 let store: SettingsStore;
@@ -21,6 +21,7 @@ describe('SettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       chromiumPath: undefined,
       browserZoomFactor: 1,
+      disableIpv6: true,
     });
   });
 
@@ -30,6 +31,7 @@ describe('SettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       chromiumPath: '/Applications/Chromium.app/Contents/MacOS/Chromium',
       browserZoomFactor: 1,
+      disableIpv6: true,
     });
   });
 
@@ -39,6 +41,7 @@ describe('SettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       chromiumPath: undefined,
       browserZoomFactor: 1.25,
+      disableIpv6: true,
     });
   });
 
@@ -48,6 +51,29 @@ describe('SettingsStore', () => {
     await expect(store.get()).resolves.toEqual({
       chromiumPath: undefined,
       browserZoomFactor: 1,
+      disableIpv6: true,
     });
+  });
+
+  it('persists IPv6 startup privacy setting', async () => {
+    await store.update({ disableIpv6: false });
+
+    await expect(store.get()).resolves.toEqual({
+      chromiumPath: undefined,
+      browserZoomFactor: 1,
+      disableIpv6: false,
+    });
+    expect(readStartupDisableIpv6(dir)).toBe(false);
+  });
+
+  it('backs up corrupt settings and falls back to defaults', async () => {
+    await writeFile(join(dir, 'settings.json'), '{', 'utf8');
+
+    await expect(store.get()).resolves.toEqual({
+      chromiumPath: undefined,
+      browserZoomFactor: 1,
+      disableIpv6: true,
+    });
+    expect((await readdir(dir)).some((file) => file.startsWith('settings.json.corrupt-'))).toBe(true);
   });
 });

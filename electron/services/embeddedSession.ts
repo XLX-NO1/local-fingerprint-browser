@@ -22,6 +22,7 @@ export async function configureProfileSession(profileSession: Session, profile: 
   configureProfilePermissions(profileSession);
 
   const acceptLanguage = buildAcceptLanguageHeader(profile.fingerprint.languages);
+  profileSession.setUserAgent(profile.fingerprint.userAgent, acceptLanguage);
   const previous = sessionState.get(profileSession);
   if (previous) {
     previous.acceptLanguage = acceptLanguage;
