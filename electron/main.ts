@@ -42,6 +42,10 @@ if (process.env.ELECTRON_BROWSER_SMOKE_USER_DATA_DIR) {
 
 const appDataDir = join(app.getPath('userData'), 'app-data');
 const embeddedWebviewPreloads = new Map<string, string>();
+const embeddedWebviewSessionProfileIds = new WeakMap<Session, string>();
+const pendingEmbeddedWebviewProfileIds: string[] = [];
+const embeddedWebviewHandlerWebContents = new WeakSet<Electron.WebContents>();
+let startupWarning: string | undefined;
 
 function configureChromiumNetworkPrivacy(disableIpv6 = readStartupDisableIpv6(appDataDir)): void {
   if (disableIpv6) {
@@ -106,10 +110,14 @@ function createWindow(): void {
       event.preventDefault();
       return;
     }
+    pendingEmbeddedWebviewProfileIds.push(profileId);
     webPreferences.preload = preload;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
+  });
+  mainWindow.webContents.on('did-attach-webview', (_event, contents) => {
+    attachEmbeddedWebviewHandlers(contents, pendingEmbeddedWebviewProfileIds.shift());
   });
 
   (mainWindow as BrowserWindow & { on(event: 'minimize', listener: (event: Event) => void): BrowserWindow }).on('minimize', (event: Event) => {
@@ -317,7 +325,74 @@ function embeddedNavigationDecisionForUrl(url: string) {
 async function prepareEmbeddedWebviewProfile(profile: BrowserProfile): Promise<void> {
   const preloadPath = await writeEmbeddedFingerprintPreload(profile);
   embeddedWebviewPreloads.set(profile.id, preloadPath);
+  embeddedWebviewSessionProfileIds.set(session.fromPartition(`persist:profile-${profile.id}`), profile.id);
   await configureEmbeddedSession(profile);
+}
+
+function attachEmbeddedWebviewHandlers(contents: Electron.WebContents, attachedProfileId?: string): void {
+  if (embeddedWebviewHandlerWebContents.has(contents)) {
+    return;
+  }
+  embeddedWebviewHandlerWebContents.add(contents);
+  const profileId = attachedProfileId ?? embeddedWebviewSessionProfileIds.get(contents.session);
+  if (!profileId) {
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    contents.on('will-navigate', (event) => {
+      event.preventDefault();
+    });
+    return;
+  }
+
+  contents.setWindowOpenHandler(({ url }) => {
+    const decision = embeddedNavigationDecisionForUrl(url);
+    if (decision.action === 'allow') {
+      void openEmbeddedWebviewPopupAsTab(profileId, url).catch((error: unknown) => {
+        console.error(`embedded popup failed for ${profileId}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    } else {
+      void updateEmbeddedWebviewActiveTabError(profileId, decision.reason).catch(() => undefined);
+    }
+    return { action: 'deny' };
+  });
+  contents.on('will-navigate', (event) => {
+    const url = event.url;
+    const decision = embeddedNavigationDecisionForUrl(url);
+    if (decision.action === 'block') {
+      event.preventDefault();
+      void updateEmbeddedWebviewActiveTabError(profileId, decision.reason).catch(() => undefined);
+    }
+  });
+  contents.on('certificate-error', (event, url, error, _certificate, callback) => {
+    const decision = certificateDecisionForError(url, error);
+    if (decision.action === 'block') {
+      event.preventDefault();
+      void updateEmbeddedWebviewActiveTabError(profileId, decision.reason).catch(() => undefined);
+      callback(false);
+    }
+  });
+}
+
+async function updateEmbeddedWebviewActiveTabError(profileId: string, lastError?: string): Promise<BrowserProfile> {
+  const profile = await store.get(profileId);
+  return updateEmbeddedWebviewProfileNavigation(profileId, profile.activeTabId ?? profileId, { lastError });
+}
+
+async function openEmbeddedWebviewPopupAsTab(profileId: string, rawUrl: string): Promise<BrowserProfile> {
+  const decision = embeddedNavigationDecisionForUrl(rawUrl);
+  if (decision.action === 'block') {
+    return updateEmbeddedWebviewActiveTabError(profileId, decision.reason);
+  }
+  const profile = await store.get(profileId);
+  const updatedWorkspace = openUrlInNewTab(profile, rawUrl);
+  const updated = await store.update(profile.id, {
+    tabs: updatedWorkspace.tabs,
+    activeTabId: updatedWorkspace.activeTabId,
+    lastOpenedUrl: updatedWorkspace.lastOpenedUrl,
+    launchTrace: [...(profile.launchTrace ?? []), `embedded new tab ${rawUrl}`].slice(-12),
+  });
+  await store.recordHistory(profile.id, 'launched', `opened new tab ${rawUrl}`);
+  notifyProfilesChanged();
+  return updated;
 }
 
 function navigationStateFromEmbeddedInput(profile: BrowserProfile, tabId: string, input: EmbeddedWebviewNavigationInput): BrowserNavigationState {
@@ -621,6 +696,104 @@ async function runElectronBrowserSmoke(): Promise<Record<string, unknown>> {
   };
 }
 
+async function runElectronDomWebviewSmoke(): Promise<Record<string, unknown>> {
+  const smokeUrl = process.env.ELECTRON_BROWSER_SMOKE_URL;
+  if (!smokeUrl) {
+    throw new Error('ELECTRON_BROWSER_SMOKE_URL is required.');
+  }
+  if (!mainWindow) {
+    throw new Error('Main window is not ready for DOM webview smoke.');
+  }
+  console.log('ELECTRON_DOM_WEBVIEW_SMOKE_STEP start');
+  mainWindow.show();
+  mainWindow.focus();
+
+  const profile = await store.create({
+    name: 'DOM Webview Smoke',
+    group: 'Smoke',
+    notes: 'Electron DOM webview smoke profile',
+  });
+  await prepareEmbeddedWebviewProfile(profile);
+  const workspace = createBlankTab(profile, smokeUrl);
+  const currentProfile = await store.update(profile.id, {
+    tabs: workspace.tabs,
+    activeTabId: workspace.activeTabId,
+    lastOpenedUrl: workspace.lastOpenedUrl,
+  });
+  const guestPromise = waitForEmbeddedWebview(smokeUrl, 8000);
+  notifyProfilesChanged();
+
+  const guest = await guestPromise;
+  await waitForWebContentsTitle(guest, 'Smoke Landing', 8000);
+  const landingTitle = guest.getTitle();
+  guest.setWindowOpenHandler(({ url }) => {
+    void openEmbeddedWebviewPopupAsTab(profile.id, url).catch(() => undefined);
+    return { action: 'deny' };
+  });
+
+  const popupUrl = await guest.executeJavaScript("document.querySelector('[data-smoke-target-blank]')?.href", true) as string | undefined;
+  if (!popupUrl) {
+    throw new Error('DOM webview smoke popup link was not found.');
+  }
+  await openEmbeddedWebviewPopupAsTab(profile.id, popupUrl);
+  const withPopup = await waitForProfileTabCount(profile.id, 2, 5000);
+  const popupOpenedInInternalTab = (withPopup.tabs ?? []).some((tab) => tab.url.includes('/popup'));
+
+  await guest.executeJavaScript("location.href = 'mailto:blocked@example.test'", true).catch(() => undefined);
+  await delay(300);
+  const afterBlockedNavigation = await store.get(profile.id);
+  const externalProtocolBlocked = !(afterBlockedNavigation.lastOpenedUrl ?? '').startsWith('mailto:');
+
+  await guest.executeJavaScript("history.pushState({}, '', '/in-page'); window.dispatchEvent(new PopStateEvent('popstate'))", true).catch(() => undefined);
+  await delay(300);
+  const afterInPage = await store.get(profile.id);
+  const addressSynced = (afterInPage.lastOpenedUrl ?? '').includes('/in-page');
+
+  return {
+    mode: 'dom-webview',
+    landingTitle,
+    openedUrl: smokeUrl,
+    popupOpenedInInternalTab,
+    tabCount: withPopup.tabs?.length ?? 0,
+    externalProtocolBlocked,
+    addressSynced,
+    selfTestOpened: Boolean(currentProfile.activeTabId),
+  };
+}
+
+async function waitForEmbeddedWebview(expectedUrl: string, timeoutMs: number): Promise<Electron.WebContents> {
+  const startedAt = Date.now();
+  const attached: Electron.WebContents[] = [];
+  const onAttached = (_event: Event, contents: Electron.WebContents) => {
+    attached.push(contents);
+  };
+  mainWindow?.webContents.on('did-attach-webview', onAttached);
+  try {
+    while (Date.now() - startedAt < timeoutMs) {
+      for (const contents of attached) {
+        if (!contents.isDestroyed() && contents.getURL() === expectedUrl) {
+          return contents;
+        }
+      }
+      await delay(100);
+    }
+  } finally {
+    mainWindow?.webContents.off('did-attach-webview', onAttached);
+  }
+  throw new Error(`Timed out waiting for DOM webview URL ${expectedUrl}.`);
+}
+
+async function waitForWebContentsTitle(contents: Electron.WebContents, expectedTitle: string, timeoutMs: number): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!contents.isDestroyed() && contents.getTitle() === expectedTitle) {
+      return;
+    }
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting for DOM webview title ${expectedTitle}; last title was ${contents.isDestroyed() ? 'destroyed' : contents.getTitle()}.`);
+}
+
 async function executeCurrentNativeJavaScript(script: string): Promise<unknown> {
   const view = currentNativeBrowserView();
   if (!view || view.webContents.isDestroyed()) {
@@ -823,23 +996,7 @@ function registerIpc(): void {
     updateEmbeddedWebviewProfileNavigation(profileId, tabId, input)
   ));
   ipcMain.handle('embedded-webview:open-popup', async (_event, profileId: string, rawUrl: string) => {
-    const decision = embeddedNavigationDecisionForUrl(rawUrl);
-    if (decision.action === 'block') {
-      return updateEmbeddedWebviewProfileNavigation(profileId, (await store.get(profileId)).activeTabId ?? profileId, {
-        lastError: decision.reason,
-      });
-    }
-    const profile = await store.get(profileId);
-    const updatedWorkspace = openUrlInNewTab(profile, rawUrl);
-    const updated = await store.update(profile.id, {
-      tabs: updatedWorkspace.tabs,
-      activeTabId: updatedWorkspace.activeTabId,
-      lastOpenedUrl: updatedWorkspace.lastOpenedUrl,
-      launchTrace: [...(profile.launchTrace ?? []), `embedded new tab ${rawUrl}`].slice(-12),
-    });
-    await store.recordHistory(profile.id, 'launched', `opened new tab ${rawUrl}`);
-    notifyProfilesChanged();
-    return updated;
+    return openEmbeddedWebviewPopupAsTab(profileId, rawUrl);
   });
   ipcMain.handle('embedded-webview:validate-navigation', (_event, url: string) => embeddedNavigationDecisionForUrl(url));
   ipcMain.handle('profiles:activate-tab', async (_event, id: string, tabId: string) => {
@@ -953,6 +1110,7 @@ function registerIpc(): void {
   ipcMain.handle('settings:get', async () => ({
     ...(await settingsStore.get()),
     detectedChromiumPath: findChromiumPath(),
+    startupWarning,
   }));
   ipcMain.handle('settings:update', async (_event, input: AppSettings) => {
     const settings = await settingsStore.update(input);
@@ -1088,7 +1246,8 @@ app.whenReady().then(async () => {
   extensionDir = join(app.getAppPath(), 'fingerprint-extension');
   store = new ProfileStore(appDataDir);
   await store.reconcileRuntimeState().catch((error: unknown) => {
-    console.error(`profile startup recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+    startupWarning = `Profile startup recovery failed: ${error instanceof Error ? error.message : String(error)}`;
+    console.error(startupWarning);
   });
   settingsStore = new SettingsStore(appDataDir);
   const settings = await settingsStore.get();
@@ -1101,6 +1260,20 @@ app.whenReady().then(async () => {
   if (process.env.ELECTRON_BROWSER_SMOKE === '1') {
     mainWindow?.webContents.once('did-finish-load', () => {
       void runElectronBrowserSmoke()
+        .then((result) => {
+          console.log(`ELECTRON_BROWSER_SMOKE_RESULT ${JSON.stringify(result)}`);
+          isQuitting = true;
+          app.quit();
+        })
+        .catch((error: unknown) => {
+          console.error(`ELECTRON_BROWSER_SMOKE_ERROR ${error instanceof Error ? error.message : String(error)}`);
+          isQuitting = true;
+          app.exit(1);
+        });
+    });
+  } else if (process.env.ELECTRON_DOM_WEBVIEW_SMOKE === '1') {
+    mainWindow?.webContents.once('did-finish-load', () => {
+      void runElectronDomWebviewSmoke()
         .then((result) => {
           console.log(`ELECTRON_BROWSER_SMOKE_RESULT ${JSON.stringify(result)}`);
           isQuitting = true;

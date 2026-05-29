@@ -210,23 +210,6 @@ export default function App() {
       }
       void window.api.updateEmbeddedWebviewNavigation(selected.id, selectedTabId, next).catch((caught) => setError(toMessage(caught)));
     };
-    const onWillNavigate = (event: Event) => {
-      const url = (event as Event & { url?: string }).url;
-      if (!url) {
-        return;
-      }
-      if (!isAllowedEmbeddedNavigationUrl(url)) {
-        event.preventDefault();
-        persistNow({ lastError: `Blocked navigation: ${url}`, isLoading: false });
-      }
-    };
-    const onNewWindow = (event: Event) => {
-      event.preventDefault();
-      const url = (event as Event & { url?: string }).url;
-      if (url) {
-        void window.api.openEmbeddedWebviewPopup(selected.id, url).catch((caught) => setError(toMessage(caught)));
-      }
-    };
     const onStartLoading = () => persistNavigationState({ isLoading: true, crashed: false, lastError: undefined });
     const onStopLoading = () => persistNavigationState({ isLoading: false });
     const onNavigate = () => persistNavigationState();
@@ -244,8 +227,6 @@ export default function App() {
     };
     const onCrashed = () => persistNow({ crashed: true, isLoading: false, lastError: 'Embedded webview crashed.' });
 
-    webview.addEventListener('will-navigate', onWillNavigate);
-    webview.addEventListener('new-window', onNewWindow);
     webview.addEventListener('did-start-loading', onStartLoading);
     webview.addEventListener('did-stop-loading', onStopLoading);
     webview.addEventListener('did-navigate', onNavigate);
@@ -259,8 +240,6 @@ export default function App() {
       if (metadataTimer !== undefined) {
         window.clearTimeout(metadataTimer);
       }
-      webview.removeEventListener('will-navigate', onWillNavigate);
-      webview.removeEventListener('new-window', onNewWindow);
       webview.removeEventListener('did-start-loading', onStartLoading);
       webview.removeEventListener('did-stop-loading', onStopLoading);
       webview.removeEventListener('did-navigate', onNavigate);
@@ -396,6 +375,7 @@ export default function App() {
     setDetectedChromiumPath(settings.detectedChromiumPath ?? '');
     setBrowserZoomFactor(settings.browserZoomFactor ?? 1);
     setDisableIpv6(settings.disableIpv6 ?? true);
+    setError(settings.startupWarning);
   }
 
   async function refreshProfiles() {
@@ -1383,15 +1363,6 @@ function formatUserAgentMetadata(userAgentMetadata?: HardwareRuntimeReport['user
     userAgentMetadata.platformVersion,
     userAgentMetadata.uaFullVersion,
   ].filter(Boolean).join(' · ') || 'unknown';
-}
-
-function isAllowedEmbeddedNavigationUrl(rawUrl: string): boolean {
-  try {
-    const protocol = new URL(rawUrl).protocol;
-    return protocol === 'http:' || protocol === 'https:' || protocol === 'file:';
-  } catch {
-    return false;
-  }
 }
 
 function toMessage(error: unknown): string {

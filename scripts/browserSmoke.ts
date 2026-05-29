@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 
-type SmokeMode = 'browser-view' | 'web-contents-view';
+type SmokeMode = 'browser-view' | 'web-contents-view' | 'dom-webview';
 
 type SmokeResult = {
   mode: SmokeMode;
@@ -13,9 +13,11 @@ type SmokeResult = {
   openedUrl: string;
   popupOpenedInInternalTab: boolean;
   tabCount: number;
-  downloadStatus: string;
-  downloadFilename: string;
+  downloadStatus?: string;
+  downloadFilename?: string;
   selfTestOpened: boolean;
+  externalProtocolBlocked?: boolean;
+  addressSynced?: boolean;
 };
 
 const requireElectron = createRequire(__filename);
@@ -28,6 +30,7 @@ async function main(): Promise<void> {
     const results = [
       await runSmokeMode('browser-view', baseUrl),
       await runSmokeMode('web-contents-view', baseUrl),
+      await runSmokeMode('dom-webview', baseUrl),
     ];
     console.log(JSON.stringify({ ok: true, results }, null, 2));
   } finally {
@@ -55,9 +58,9 @@ function runElectronSmokeProcess(mode: SmokeMode, baseUrl: string, userDataDir: 
       cwd: process.cwd(),
       env: {
         ...process.env,
-        ELECTRON_BROWSER_SMOKE: '1',
         ELECTRON_BROWSER_SMOKE_URL: `${baseUrl}/`,
         ELECTRON_BROWSER_SMOKE_USER_DATA_DIR: userDataDir,
+        ...(mode === 'dom-webview' ? { ELECTRON_DOM_WEBVIEW_SMOKE: '1' } : { ELECTRON_BROWSER_SMOKE: '1' }),
         ...(mode === 'web-contents-view' ? { USE_WEB_CONTENTS_VIEW: '1' } : { USE_WEB_CONTENTS_VIEW: '0' }),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -105,8 +108,11 @@ function assertSmokeResult(result: SmokeResult, mode: SmokeMode): void {
   if (!result.popupOpenedInInternalTab || result.tabCount < 2) {
     throw new Error(`Target blank did not open as an internal tab for ${mode}.`);
   }
-  if (result.downloadStatus !== 'completed' || result.downloadFilename !== 'smoke-download.txt') {
+  if (mode !== 'dom-webview' && (result.downloadStatus !== 'completed' || result.downloadFilename !== 'smoke-download.txt')) {
     throw new Error(`Download smoke failed for ${mode}: ${result.downloadFilename} ${result.downloadStatus}`);
+  }
+  if (mode === 'dom-webview' && (!result.externalProtocolBlocked || !result.addressSynced)) {
+    throw new Error(`DOM webview smoke failed: externalProtocolBlocked=${result.externalProtocolBlocked} addressSynced=${result.addressSynced}`);
   }
   if (!result.selfTestOpened) {
     throw new Error(`Self-test page did not open for ${mode}.`);

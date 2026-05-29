@@ -253,14 +253,17 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain("ipcMain.handle('embedded-webview:open-popup'");
     expect(mainSource).toContain('openUrlInNewTab(profile, rawUrl)');
     expect(preloadSource).toContain('updateEmbeddedWebviewNavigation');
-    expect(preloadSource).toContain('openEmbeddedWebviewPopup');
     expect(appSource).toContain("webview.addEventListener('did-navigate'");
     expect(appSource).toContain("webview.addEventListener('page-title-updated'");
-    expect(appSource).toContain("webview.addEventListener('new-window'");
     expect(appSource).toContain('if (!isEditingUrl) {');
     expect(appSource).toContain('setOpenUrl(next.url);');
     expect(appSource).toContain('updateEmbeddedWebviewNavigation(selected.id, selectedTabId, next)');
-    expect(appSource).toContain('openEmbeddedWebviewPopup(selected.id, url)');
+    expect(mainSource).toContain("mainWindow.webContents.on('did-attach-webview'");
+    expect(mainSource).toContain('function attachEmbeddedWebviewHandlers');
+    expect(mainSource).toContain('contents.setWindowOpenHandler');
+    expect(mainSource).toContain('openEmbeddedWebviewPopupAsTab(profileId, url)');
+    expect(mainSource).toContain("contents.on('will-navigate'");
+    expect(mainSource).toContain('event.preventDefault();');
   });
 
   it('does not call DOM webview navigation methods before they are ready', () => {
