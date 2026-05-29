@@ -343,19 +343,8 @@ function attachEmbeddedWebviewHandlers(contents: Electron.WebContents, attachedP
     return;
   }
 
-  contents.setWindowOpenHandler(({ url }) => {
-    const decision = embeddedNavigationDecisionForUrl(url);
-    if (decision.action === 'allow') {
-      void openEmbeddedWebviewPopupAsTab(profileId, url).catch((error: unknown) => {
-        console.error(`embedded popup failed for ${profileId}: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    } else {
-      void updateEmbeddedWebviewActiveTabError(profileId, decision.reason).catch(() => undefined);
-    }
-    return { action: 'deny' };
-  });
-  contents.on('will-navigate', (event) => {
-    const url = event.url;
+  contents.setWindowOpenHandler(({ url }) => handleEmbeddedWebviewWindowOpen(profileId, url));
+  contents.on('will-navigate', (event, url) => {
     const decision = embeddedNavigationDecisionForUrl(url);
     if (decision.action === 'block') {
       event.preventDefault();
@@ -370,6 +359,18 @@ function attachEmbeddedWebviewHandlers(contents: Electron.WebContents, attachedP
       callback(false);
     }
   });
+}
+
+function handleEmbeddedWebviewWindowOpen(profileId: string, url: string): { action: 'deny' } {
+  const decision = embeddedNavigationDecisionForUrl(url);
+  if (decision.action === 'allow') {
+    void openEmbeddedWebviewPopupAsTab(profileId, url).catch((error: unknown) => {
+      console.error(`embedded popup failed for ${profileId}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  } else {
+    void updateEmbeddedWebviewActiveTabError(profileId, decision.reason).catch(() => undefined);
+  }
+  return { action: 'deny' };
 }
 
 async function updateEmbeddedWebviewActiveTabError(profileId: string, lastError?: string): Promise<BrowserProfile> {
@@ -720,34 +721,34 @@ async function runElectronDomWebviewSmoke(): Promise<Record<string, unknown>> {
     activeTabId: workspace.activeTabId,
     lastOpenedUrl: workspace.lastOpenedUrl,
   });
+  const webviewTabId = currentProfile.activeTabId;
+  if (!webviewTabId) {
+    throw new Error('DOM webview smoke profile did not create an active tab.');
+  }
   const guestPromise = waitForEmbeddedWebview(smokeUrl, 8000);
   notifyProfilesChanged();
 
   const guest = await guestPromise;
   await waitForWebContentsTitle(guest, 'Smoke Landing', 8000);
   const landingTitle = guest.getTitle();
-  guest.setWindowOpenHandler(({ url }) => {
-    void openEmbeddedWebviewPopupAsTab(profile.id, url).catch(() => undefined);
-    return { action: 'deny' };
-  });
-
-  const popupUrl = await guest.executeJavaScript("document.querySelector('[data-smoke-target-blank]')?.href", true) as string | undefined;
-  if (!popupUrl) {
-    throw new Error('DOM webview smoke popup link was not found.');
-  }
-  await openEmbeddedWebviewPopupAsTab(profile.id, popupUrl);
-  const withPopup = await waitForProfileTabCount(profile.id, 2, 5000);
-  const popupOpenedInInternalTab = (withPopup.tabs ?? []).some((tab) => tab.url.includes('/popup'));
 
   await guest.executeJavaScript("location.href = 'mailto:blocked@example.test'", true).catch(() => undefined);
   await delay(300);
   const afterBlockedNavigation = await store.get(profile.id);
   const externalProtocolBlocked = !(afterBlockedNavigation.lastOpenedUrl ?? '').startsWith('mailto:');
 
-  await guest.executeJavaScript("history.pushState({}, '', '/in-page'); window.dispatchEvent(new PopStateEvent('popstate'))", true).catch(() => undefined);
+  await guest.executeJavaScript("location.hash = 'in-page'", true).catch(() => undefined);
   await delay(300);
   const afterInPage = await store.get(profile.id);
-  const addressSynced = (afterInPage.lastOpenedUrl ?? '').includes('/in-page');
+  const addressSynced = Boolean((afterInPage.tabs ?? []).find((tab) => tab.id === webviewTabId)?.url.includes('in-page'));
+
+  const popupUrl = await guest.executeJavaScript("document.querySelector('[data-smoke-target-blank]')?.href", true) as string | undefined;
+  if (!popupUrl) {
+    throw new Error('DOM webview smoke popup link was not found.');
+  }
+  handleEmbeddedWebviewWindowOpen(profile.id, popupUrl);
+  const withPopup = await waitForProfileTabCount(profile.id, 2, 5000);
+  const popupOpenedInInternalTab = (withPopup.tabs ?? []).some((tab) => tab.url.includes('/popup'));
 
   return {
     mode: 'dom-webview',

@@ -237,6 +237,7 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain("ipcMain.handle('embedded-webview:prepare'");
     expect(appSource).toContain('prepareEmbeddedWebview(selected.id)');
     expect(appSource).toContain('preparedEmbeddedProfileId !== selected.id');
+    expect(appSource).toContain("key={`${selected.id}:${selectedTabId}:${selected.fingerprint.id}:${selected.proxy?.id ?? 'direct'}`}");
     expect(appSource).toContain('useragent={selected.fingerprint.userAgent}');
     expect(embeddedSessionSource).toContain('profileSession.setUserAgent(profile.fingerprint.userAgent');
     expect(attachHandler).toContain('profileIdFromEmbeddedPartition');
@@ -261,8 +262,10 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain("mainWindow.webContents.on('did-attach-webview'");
     expect(mainSource).toContain('function attachEmbeddedWebviewHandlers');
     expect(mainSource).toContain('contents.setWindowOpenHandler');
+    expect(mainSource).toContain('handleEmbeddedWebviewWindowOpen(profileId, url)');
+    expect(mainSource).toContain('function handleEmbeddedWebviewWindowOpen');
     expect(mainSource).toContain('openEmbeddedWebviewPopupAsTab(profileId, url)');
-    expect(mainSource).toContain("contents.on('will-navigate'");
+    expect(mainSource).toContain("contents.on('will-navigate', (event, url) => {");
     expect(mainSource).toContain('event.preventDefault();');
   });
 

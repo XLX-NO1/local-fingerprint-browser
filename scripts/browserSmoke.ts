@@ -45,7 +45,7 @@ async function runSmokeMode(mode: SmokeMode, baseUrl: string): Promise<SmokeResu
     assertSmokeResult(result, mode);
     return result;
   } finally {
-    await rm(userDataDir, { recursive: true, force: true });
+    await rm(userDataDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 });
   }
 }
 
@@ -56,6 +56,7 @@ function runElectronSmokeProcess(mode: SmokeMode, baseUrl: string, userDataDir: 
     let stderr = '';
     const child = spawn(electronPath, ['.'], {
       cwd: process.cwd(),
+      detached: process.platform !== 'win32',
       env: {
         ...process.env,
         ELECTRON_BROWSER_SMOKE_URL: `${baseUrl}/`,
@@ -66,9 +67,19 @@ function runElectronSmokeProcess(mode: SmokeMode, baseUrl: string, userDataDir: 
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const timeout = setTimeout(() => {
-      child.kill('SIGTERM');
+      settled = true;
+      stopElectronSmokeChild(child.pid, 'SIGTERM');
       reject(new Error(`Electron browser smoke timed out for ${mode}. stdout=${stdout} stderr=${stderr}`));
     }, 30000);
+    const resolveAndStopChild = (result: SmokeResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      stopElectronSmokeChild(child.pid, 'SIGTERM');
+      resolve(result);
+    };
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8');
@@ -76,15 +87,17 @@ function runElectronSmokeProcess(mode: SmokeMode, baseUrl: string, userDataDir: 
         if (!line.startsWith('ELECTRON_BROWSER_SMOKE_RESULT ')) {
           continue;
         }
-        settled = true;
-        clearTimeout(timeout);
-        resolve(JSON.parse(line.slice('ELECTRON_BROWSER_SMOKE_RESULT '.length)) as SmokeResult);
+        resolveAndStopChild(JSON.parse(line.slice('ELECTRON_BROWSER_SMOKE_RESULT '.length)) as SmokeResult);
       }
     });
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
     child.on('error', (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       clearTimeout(timeout);
       reject(error);
     });
@@ -96,6 +109,25 @@ function runElectronSmokeProcess(mode: SmokeMode, baseUrl: string, userDataDir: 
       reject(new Error(`Electron browser smoke failed for ${mode} with code ${code}. stdout=${stdout} stderr=${stderr}`));
     });
   });
+}
+
+function stopElectronSmokeChild(pid: number | undefined, signal: NodeJS.Signals): void {
+  if (!pid) {
+    return;
+  }
+  try {
+    if (process.platform === 'win32') {
+      process.kill(pid, signal);
+    } else {
+      process.kill(-pid, signal);
+    }
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // The process may already have exited after printing the smoke result.
+    }
+  }
 }
 
 function assertSmokeResult(result: SmokeResult, mode: SmokeMode): void {

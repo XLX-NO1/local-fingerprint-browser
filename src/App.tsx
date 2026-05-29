@@ -813,10 +813,11 @@ export default function App() {
 	                  {USE_DOM_EMBEDDED_WEBVIEW && preparedEmbeddedProfileId !== selected.id ? (
 	                    <div className="native-browser-hint">PREPARING WEBVIEW</div>
 	                  ) : USE_DOM_EMBEDDED_WEBVIEW ? (
-	                    <webview
-	                      className="embedded-webview"
-	                      ref={embeddedWebviewRef}
-	                      src={selected.lastOpenedUrl}
+		                    <webview
+		                      className="embedded-webview"
+		                      key={`${selected.id}:${selectedTabId}:${selected.fingerprint.id}:${selected.proxy?.id ?? 'direct'}`}
+		                      ref={embeddedWebviewRef}
+		                      src={selected.lastOpenedUrl}
 	                      partition={embeddedPartitionForProfile(selected.id)}
 	                      useragent={selected.fingerprint.userAgent}
 	                      style={{ width: '100%', height: '100%' }}

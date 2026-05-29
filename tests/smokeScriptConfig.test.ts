@@ -22,10 +22,16 @@ describe('launch smoke script config', () => {
     expect(smokeSource).toContain('browser-view');
     expect(smokeSource).toContain('web-contents-view');
     expect(smokeSource).toContain('dom-webview');
+    expect(smokeSource).toContain('resolveAndStopChild');
+    expect(smokeSource).toContain('stopElectronSmokeChild');
+    expect(smokeSource).toContain("process.kill(-pid, signal)");
     expect(mainSource).toContain('runElectronBrowserSmoke');
     expect(mainSource).toContain('runElectronDomWebviewSmoke');
     expect(mainSource).toContain('process.env.ELECTRON_BROWSER_SMOKE');
     expect(mainSource).toContain('process.env.ELECTRON_DOM_WEBVIEW_SMOKE');
     expect(mainSource).toContain('ELECTRON_BROWSER_SMOKE_RESULT');
+    expect(mainSource).toContain("document.querySelector('[data-smoke-target-blank]')?.href");
+    expect(mainSource).toContain('handleEmbeddedWebviewWindowOpen(profile.id, popupUrl)');
+    expect(mainSource).not.toContain('guest.setWindowOpenHandler');
   });
 });
