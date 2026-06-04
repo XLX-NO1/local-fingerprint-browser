@@ -5,19 +5,22 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 
-type SmokeMode = 'browser-view' | 'web-contents-view' | 'dom-webview';
+type SmokeMode = 'browser-view' | 'web-contents-view' | 'web-contents-view-ui' | 'dom-webview';
 
 type SmokeResult = {
   mode: SmokeMode;
   landingTitle: string;
   openedUrl: string;
-  popupOpenedInInternalTab: boolean;
+  popupOpenedInInternalTab?: boolean;
   tabCount: number;
   downloadStatus?: string;
   downloadFilename?: string;
-  selfTestOpened: boolean;
+  selfTestOpened?: boolean;
   externalProtocolBlocked?: boolean;
   addressSynced?: boolean;
+  surfaceOnly?: boolean;
+  domWebviewAttached?: boolean;
+  nativeViewAttached?: boolean;
 };
 
 const requireElectron = createRequire(__filename);
@@ -30,6 +33,7 @@ async function main(): Promise<void> {
     const results = [
       await runSmokeMode('browser-view', baseUrl),
       await runSmokeMode('web-contents-view', baseUrl),
+      await runSmokeMode('web-contents-view-ui', baseUrl),
       await runSmokeMode('dom-webview', baseUrl),
     ];
     console.log(JSON.stringify({ ok: true, results }, null, 2));
@@ -61,8 +65,13 @@ function runElectronSmokeProcess(mode: SmokeMode, baseUrl: string, userDataDir: 
         ...process.env,
         ELECTRON_BROWSER_SMOKE_URL: `${baseUrl}/`,
         ELECTRON_BROWSER_SMOKE_USER_DATA_DIR: userDataDir,
-        ...(mode === 'dom-webview' ? { ELECTRON_DOM_WEBVIEW_SMOKE: '1' } : { ELECTRON_BROWSER_SMOKE: '1' }),
-        ...(mode === 'web-contents-view' ? { USE_WEB_CONTENTS_VIEW: '1' } : { USE_WEB_CONTENTS_VIEW: '0' }),
+        ...(mode === 'dom-webview'
+          ? { ELECTRON_DOM_WEBVIEW_SMOKE: '1' }
+          : mode === 'web-contents-view-ui'
+            ? { ELECTRON_BROWSER_UI_SMOKE: '1' }
+            : { ELECTRON_BROWSER_SMOKE: '1' }),
+        ...(mode === 'web-contents-view' || mode === 'web-contents-view-ui' ? { USE_WEB_CONTENTS_VIEW: '1' } : { USE_WEB_CONTENTS_VIEW: '0' }),
+        ...(mode === 'web-contents-view-ui' ? { ELECTRON_SETTINGS_GET_DELAY_MS: '1200' } : {}),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -137,16 +146,22 @@ function assertSmokeResult(result: SmokeResult, mode: SmokeMode): void {
   if (result.landingTitle !== 'Smoke Landing') {
     throw new Error(`Unexpected smoke landing title: ${result.landingTitle}`);
   }
-  if (!result.popupOpenedInInternalTab || result.tabCount < 2) {
+  if (mode !== 'web-contents-view-ui' && (!result.popupOpenedInInternalTab || result.tabCount < 2)) {
     throw new Error(`Target blank did not open as an internal tab for ${mode}.`);
   }
-  if (mode !== 'dom-webview' && (result.downloadStatus !== 'completed' || result.downloadFilename !== 'smoke-download.txt')) {
+  if (mode !== 'dom-webview' && mode !== 'web-contents-view-ui' && (result.downloadStatus !== 'completed' || result.downloadFilename !== 'smoke-download.txt')) {
     throw new Error(`Download smoke failed for ${mode}: ${result.downloadFilename} ${result.downloadStatus}`);
+  }
+  if (mode === 'web-contents-view-ui' && (result.domWebviewAttached || !result.nativeViewAttached)) {
+    throw new Error(`WebContentsView UI smoke mounted the wrong surface: domWebviewAttached=${result.domWebviewAttached} nativeViewAttached=${result.nativeViewAttached}`);
+  }
+  if (mode === 'web-contents-view-ui' && !result.surfaceOnly) {
+    throw new Error('WebContentsView UI smoke must be marked as a surface-only check.');
   }
   if (mode === 'dom-webview' && (!result.externalProtocolBlocked || !result.addressSynced)) {
     throw new Error(`DOM webview smoke failed: externalProtocolBlocked=${result.externalProtocolBlocked} addressSynced=${result.addressSynced}`);
   }
-  if (!result.selfTestOpened) {
+  if (mode !== 'web-contents-view-ui' && !result.selfTestOpened) {
     throw new Error(`Self-test page did not open for ${mode}.`);
   }
 }

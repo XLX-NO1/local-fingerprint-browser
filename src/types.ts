@@ -146,6 +146,7 @@ export interface AppSettings {
   detectedChromiumPath?: string;
   browserZoomFactor?: number;
   disableIpv6?: boolean;
+  browserPageViewMode?: 'browser-view' | 'web-contents-view';
   startupWarning?: string;
 }
 

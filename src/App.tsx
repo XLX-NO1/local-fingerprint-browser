@@ -9,13 +9,13 @@ import { applyFingerprintRegionPreset, applyFingerprintOsPreset, fingerprintToFo
 import { generateLocalFingerprint } from './localFingerprint';
 import { isFingerprintSelfTestUrl } from './selfTestDisplay';
 import { generateFingerprintForRegion, inferRegionFromFingerprint, REGION_PRESETS } from './fingerprintRegions';
+import { browserSurfaceModeFromSettings, shouldUseDomSurface, shouldUseNativeSurface, type BrowserSurfaceMode } from './browserSurfaceMode';
 
 const PROFILE_COLORS = ['#52ff9b', '#5ee7ff', '#ffd166', '#ff5d73', '#b58cff', '#ff9f43'];
 const DEFAULT_PROFILE_COLOR = PROFILE_COLORS[0];
 const DEFAULT_REGION = 'US';
 const DEFAULT_CREATE_FINGERPRINT = generateFingerprintForRegion(DEFAULT_REGION, 'create-profile-default');
 const DEFAULT_FORM_FINGERPRINT = fingerprintToForm(DEFAULT_CREATE_FINGERPRINT);
-const USE_DOM_EMBEDDED_WEBVIEW = true;
 const BROWSER_ZOOM_OPTIONS = [
   { label: '80%', value: 0.8 },
   { label: '90%', value: 0.9 },
@@ -38,6 +38,7 @@ export default function App() {
   const [detectedChromiumPath, setDetectedChromiumPath] = useState('');
   const [browserZoomFactor, setBrowserZoomFactor] = useState(1);
   const [disableIpv6, setDisableIpv6] = useState(true);
+  const [browserSurfaceMode, setBrowserSurfaceMode] = useState<BrowserSurfaceMode>('loading');
   const [query, setQuery] = useState('');
   const [activeGroup, setActiveGroup] = useState<ProfileGroupFilter>('ALL');
   const [openUrl, setOpenUrl] = useState('https://example.com');
@@ -115,6 +116,28 @@ export default function App() {
       setNavigationState(undefined);
       return undefined;
     }
+    if (browserSurfaceMode === 'loading') {
+      setNavigationState(undefined);
+      return undefined;
+    }
+    if (shouldUseDomSurface(browserSurfaceMode)) {
+      if (selectedTab) {
+        setNavigationState({
+          profileId: selected.id,
+          tabId: selectedTab.id,
+          url: selectedTab.url,
+          title: selectedTab.title,
+          canGoBack: selectedTab.canGoBack ?? false,
+          canGoForward: selectedTab.canGoForward ?? false,
+          isLoading: selectedTab.isLoading ?? false,
+          crashed: selectedTab.crashed ?? false,
+          lastError: selectedTab.lastError,
+        });
+      } else {
+        setNavigationState(undefined);
+      }
+      return undefined;
+    }
     let cancelled = false;
     void window.api.getNativeBrowserNavigationState?.(selected.id, selectedTabId)
       .then((state) => {
@@ -130,10 +153,10 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selected?.id, selectedTabId, selected?.lastOpenedUrl, selected?.tabs]);
+  }, [selected?.id, selectedTabId, selected?.lastOpenedUrl, selected?.tabs, selectedTab, browserSurfaceMode]);
 
   useEffect(() => {
-    if (!USE_DOM_EMBEDDED_WEBVIEW || !selected?.id || isSelfTestView) {
+    if (!shouldUseDomSurface(browserSurfaceMode) || !selected?.id || isSelfTestView) {
       setPreparedEmbeddedProfileId(undefined);
       return undefined;
     }
@@ -153,10 +176,10 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [isSelfTestView, selected?.fingerprint.id, selected?.id, selected?.proxy?.id]);
+  }, [browserSurfaceMode, isSelfTestView, selected?.fingerprint.id, selected?.id, selected?.proxy?.id]);
 
   useEffect(() => {
-    if (!USE_DOM_EMBEDDED_WEBVIEW || !selected?.id || !selectedTabId || preparedEmbeddedProfileId !== selected.id) {
+    if (!shouldUseDomSurface(browserSurfaceMode) || !selected?.id || !selectedTabId || preparedEmbeddedProfileId !== selected.id) {
       return undefined;
     }
     const webview = embeddedWebviewRef.current;
@@ -249,7 +272,7 @@ export default function App() {
       webview.removeEventListener('crashed', onCrashed);
       webview.removeEventListener('dom-ready', onNavigate);
     };
-  }, [isEditingUrl, preparedEmbeddedProfileId, selected?.id, selected?.lastOpenedUrl, selectedTab?.title, selectedTabId]);
+  }, [browserSurfaceMode, isEditingUrl, preparedEmbeddedProfileId, selected?.id, selected?.lastOpenedUrl, selectedTab?.title, selectedTabId]);
 
   useEffect(() => {
     void refreshDownloads(selected?.id);
@@ -271,7 +294,7 @@ export default function App() {
     const main = mainRef.current;
     const inspector = inspectorRef.current;
     const tabId = selectedTabId;
-    if (USE_DOM_EMBEDDED_WEBVIEW || isSelfTestView || !frame || !main || !selected?.lastOpenedUrl || !tabId || isModalOpen) {
+    if (!shouldUseNativeSurface(browserSurfaceMode) || isSelfTestView || !frame || !main || !selected?.lastOpenedUrl || !tabId || isModalOpen) {
       void window.api.hideNativeBrowserView?.();
       return;
     }
@@ -292,7 +315,7 @@ export default function App() {
       layoutVersion,
     };
     void window.api.showNativeBrowserView?.(selected.id, tabId, selected.lastOpenedUrl, bounds);
-  }, [isInspectorCollapsed, isModalOpen, isSelfTestView, selected?.id, selected?.lastOpenedUrl, selectedTabId]);
+  }, [browserSurfaceMode, isInspectorCollapsed, isModalOpen, isSelfTestView, selected?.id, selected?.lastOpenedUrl, selectedTabId]);
 
   const clearScheduledNativeBrowserViewSync = useCallback(() => {
     const timers = nativeBrowserSyncTimersRef.current;
@@ -375,6 +398,7 @@ export default function App() {
     setDetectedChromiumPath(settings.detectedChromiumPath ?? '');
     setBrowserZoomFactor(settings.browserZoomFactor ?? 1);
     setDisableIpv6(settings.disableIpv6 ?? true);
+    setBrowserSurfaceMode(browserSurfaceModeFromSettings(settings));
     setError(settings.startupWarning);
   }
 
@@ -522,12 +546,12 @@ export default function App() {
     }
   }
 
-  async function openWebsite(profile: BrowserProfile) {
+  async function openWebsite(profile: BrowserProfile, explicitUrl = openUrl) {
     try {
       setError(undefined);
-      const updated = await window.api.openProfileUrl(profile.id, openUrl);
+      const updated = await window.api.openProfileUrl(profile.id, explicitUrl);
       setSelectedId(updated.id);
-      setOpenUrl(profileAddressBarUrl(updated, openUrl));
+      setOpenUrl(profileAddressBarUrl(updated, explicitUrl));
       await refreshProfiles();
     } catch (caught) {
       setError(toMessage(caught));
@@ -538,7 +562,7 @@ export default function App() {
   async function goBackNativeBrowserView() {
     try {
       const embeddedWebview = embeddedWebviewRef.current;
-      if (USE_DOM_EMBEDDED_WEBVIEW && embeddedWebview) {
+      if (shouldUseDomSurface(browserSurfaceMode) && embeddedWebview) {
         try {
           if (embeddedWebview.canGoBack()) {
             embeddedWebview.goBack();
@@ -558,7 +582,7 @@ export default function App() {
   async function goForwardNativeBrowserView() {
     try {
       const embeddedWebview = embeddedWebviewRef.current;
-      if (USE_DOM_EMBEDDED_WEBVIEW && embeddedWebview) {
+      if (shouldUseDomSurface(browserSurfaceMode) && embeddedWebview) {
         try {
           if (embeddedWebview.canGoForward()) {
             embeddedWebview.goForward();
@@ -578,7 +602,7 @@ export default function App() {
   async function reloadNativeBrowserView(profile: BrowserProfile) {
     try {
       if (profile.lastOpenedUrl) {
-        if (USE_DOM_EMBEDDED_WEBVIEW) {
+        if (shouldUseDomSurface(browserSurfaceMode)) {
           try {
             embeddedWebviewRef.current?.reload();
           } catch {
@@ -767,7 +791,7 @@ export default function App() {
                 <div className="side-bookmarks">
                   <div>/ bookmarks</div>
                   {profile.bookmarks.map((bookmark) => (
-                    <button type="button" key={bookmark.id} onClick={() => { setSelectedId(profile.id); setOpenUrl(bookmark.url); void openWebsite(profile); }}>
+                    <button type="button" key={bookmark.id} onClick={() => { setSelectedId(profile.id); setOpenUrl(bookmark.url); void openWebsite(profile, bookmark.url); }}>
                       {bookmark.title}
                     </button>
                   ))}
@@ -809,20 +833,22 @@ export default function App() {
               ) : isSelfTestView ? (
                 <SelfTestReportView profile={selected} />
               ) : (
-	                <div className="native-browser-frame" ref={nativeBrowserFrameRef}>
-	                  {USE_DOM_EMBEDDED_WEBVIEW && preparedEmbeddedProfileId !== selected.id ? (
-	                    <div className="native-browser-hint">PREPARING WEBVIEW</div>
-	                  ) : USE_DOM_EMBEDDED_WEBVIEW ? (
-		                    <webview
-		                      className="embedded-webview"
-		                      key={`${selected.id}:${selectedTabId}:${selected.fingerprint.id}:${selected.proxy?.id ?? 'direct'}`}
-		                      ref={embeddedWebviewRef}
-		                      src={selected.lastOpenedUrl}
-	                      partition={embeddedPartitionForProfile(selected.id)}
-	                      useragent={selected.fingerprint.userAgent}
-	                      style={{ width: '100%', height: '100%' }}
-	                      allowpopups
-	                    />
+                <div className="native-browser-frame" ref={nativeBrowserFrameRef}>
+                  {browserSurfaceMode === 'loading' ? (
+                    <div className="native-browser-hint">PREPARING BROWSER MODE</div>
+                  ) : shouldUseDomSurface(browserSurfaceMode) && preparedEmbeddedProfileId !== selected.id ? (
+                    <div className="native-browser-hint">PREPARING WEBVIEW</div>
+                  ) : shouldUseDomSurface(browserSurfaceMode) ? (
+                    <webview
+                      className="embedded-webview"
+                      key={`${selected.id}:${selectedTabId}:${selected.fingerprint.id}:${selected.proxy?.id ?? 'direct'}`}
+                      ref={embeddedWebviewRef}
+                      src={selected.lastOpenedUrl}
+                      partition={embeddedPartitionForProfile(selected.id)}
+                      useragent={selected.fingerprint.userAgent}
+                      style={{ width: '100%', height: '100%' }}
+                      allowpopups
+                    />
                   ) : (
                     <div className="native-browser-hint">CHROMIUM VIEW</div>
                   )}

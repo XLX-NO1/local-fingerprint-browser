@@ -71,6 +71,9 @@ const hiddenSelfTestWindows = new Set<BrowserWindow>();
 const downloadController = new DownloadController();
 const downloadSessionPartitions = new Set<string>();
 const browserPageViewMode = browserPageViewModeFromEnv(process.env);
+const settingsGetDelayMs = normalizeSmokeDelayMs(process.env.ELECTRON_SETTINGS_GET_DELAY_MS);
+let browserUiSmokeDomWebviewAttached = false;
+let detachBrowserUiSmokeWebviewListener: (() => void) | undefined;
 const nativeBrowserController = new NativeBrowserViewController({
   createView: createNativeBrowserPageView,
   prepareProfileSession: configureEmbeddedSession,
@@ -85,7 +88,21 @@ const nativeBrowserController = new NativeBrowserViewController({
   isNavigationAbort,
 });
 
+function normalizeSmokeDelayMs(value: string | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
+
+function browserUiSmokeWebviewAttachedHandler(): void {
+  browserUiSmokeDomWebviewAttached = true;
+}
+
+function attachBrowserUiSmokeWebviewListener(window: BrowserWindow): () => void {
+  window.webContents.on('did-attach-webview', browserUiSmokeWebviewAttachedHandler);
+  return () => window.webContents.off('did-attach-webview', browserUiSmokeWebviewAttachedHandler);
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -139,6 +156,11 @@ function createWindow(): void {
       callback(false);
     }
   });
+
+  if (process.env.ELECTRON_BROWSER_UI_SMOKE === '1') {
+    detachBrowserUiSmokeWebviewListener?.();
+    detachBrowserUiSmokeWebviewListener = attachBrowserUiSmokeWebviewListener(mainWindow);
+  }
 
   if (process.env.ELECTRON_BROWSER_SMOKE === '1') {
     void mainWindow.loadURL('about:blank');
@@ -762,6 +784,50 @@ async function runElectronDomWebviewSmoke(): Promise<Record<string, unknown>> {
   };
 }
 
+async function seedElectronBrowserUiSmokeProfile(): Promise<BrowserProfile> {
+  const smokeUrl = process.env.ELECTRON_BROWSER_SMOKE_URL;
+  if (!smokeUrl) {
+    throw new Error('ELECTRON_BROWSER_SMOKE_URL is required.');
+  }
+  const profile = await store.create({
+    name: `UI Smoke ${currentBrowserPageViewMode()}`,
+    group: 'Smoke',
+    notes: 'Electron browser UI smoke profile',
+  });
+  const workspace = createBlankTab(profile, smokeUrl);
+  return store.update(profile.id, {
+    tabs: workspace.tabs,
+    activeTabId: workspace.activeTabId,
+    lastOpenedUrl: workspace.lastOpenedUrl,
+  });
+}
+
+async function runElectronBrowserUiSmoke(seedProfile: BrowserProfile): Promise<Record<string, unknown>> {
+  const smokeUrl = process.env.ELECTRON_BROWSER_SMOKE_URL;
+  if (!smokeUrl) {
+    throw new Error('ELECTRON_BROWSER_SMOKE_URL is required.');
+  }
+  if (!mainWindow) {
+    throw new Error('Main window is not ready for browser UI smoke.');
+  }
+  console.log(`ELECTRON_BROWSER_UI_SMOKE_STEP start ${currentBrowserPageViewMode()}`);
+  mainWindow.show();
+  mainWindow.focus();
+
+  await waitForCurrentNativeUrl(smokeUrl, 8000);
+  await delay(500);
+  const nativeView = currentNativeBrowserView();
+  return {
+    mode: `${currentBrowserPageViewMode()}-ui`,
+    landingTitle: nativeView && !nativeView.webContents.isDestroyed() ? electronWebContents(nativeView).getTitle() : '',
+    openedUrl: smokeUrl,
+    tabCount: seedProfile.tabs?.length ?? 0,
+    surfaceOnly: true,
+    domWebviewAttached: browserUiSmokeDomWebviewAttached,
+    nativeViewAttached: Boolean(nativeView && nativeBrowserController.isAttached()),
+  };
+}
+
 async function waitForEmbeddedWebview(expectedUrl: string, timeoutMs: number): Promise<Electron.WebContents> {
   const startedAt = Date.now();
   const attached: Electron.WebContents[] = [];
@@ -1109,8 +1175,9 @@ function registerIpc(): void {
     return updated;
   });
   ipcMain.handle('settings:get', async () => ({
-    ...(await settingsStore.get()),
+    ...(settingsGetDelayMs > 0 ? await delay(settingsGetDelayMs).then(() => settingsStore.get()) : await settingsStore.get()),
     detectedChromiumPath: findChromiumPath(),
+    browserPageViewMode: currentBrowserPageViewMode(),
     startupWarning,
   }));
   ipcMain.handle('settings:update', async (_event, input: AppSettings) => {
@@ -1257,6 +1324,9 @@ app.whenReady().then(async () => {
   launcher = chromiumPath ? new BrowserLauncher(chromiumPath, extensionDir) : undefined;
   registerIpc();
   createTray();
+  const browserUiSmokeProfile = process.env.ELECTRON_BROWSER_UI_SMOKE === '1'
+    ? await seedElectronBrowserUiSmokeProfile()
+    : undefined;
   createWindow();
   if (process.env.ELECTRON_BROWSER_SMOKE === '1') {
     mainWindow?.webContents.once('did-finish-load', () => {
@@ -1281,6 +1351,24 @@ app.whenReady().then(async () => {
           app.quit();
         })
         .catch((error: unknown) => {
+          console.error(`ELECTRON_BROWSER_SMOKE_ERROR ${error instanceof Error ? error.message : String(error)}`);
+          isQuitting = true;
+          app.exit(1);
+        });
+    });
+  } else if (process.env.ELECTRON_BROWSER_UI_SMOKE === '1') {
+    mainWindow?.webContents.once('did-finish-load', () => {
+      void runElectronBrowserUiSmoke(browserUiSmokeProfile as BrowserProfile)
+        .then((result) => {
+          detachBrowserUiSmokeWebviewListener?.();
+          detachBrowserUiSmokeWebviewListener = undefined;
+          console.log(`ELECTRON_BROWSER_SMOKE_RESULT ${JSON.stringify(result)}`);
+          isQuitting = true;
+          app.quit();
+        })
+        .catch((error: unknown) => {
+          detachBrowserUiSmokeWebviewListener?.();
+          detachBrowserUiSmokeWebviewListener = undefined;
           console.error(`ELECTRON_BROWSER_SMOKE_ERROR ${error instanceof Error ? error.message : String(error)}`);
           isQuitting = true;
           app.exit(1);

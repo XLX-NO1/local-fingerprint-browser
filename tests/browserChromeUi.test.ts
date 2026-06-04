@@ -32,7 +32,7 @@ describe('browser chrome UI', () => {
   it('clips normal native BrowserView bounds to the main workspace', () => {
     expect(appSource).toContain('mainRef');
     expect(appSource).toContain('inspectorRef');
-    expect(appSource).toContain('USE_DOM_EMBEDDED_WEBVIEW');
+    expect(appSource).toContain('browserSurfaceMode');
     expect(appSource).toContain('<webview');
     expect(appSource).toContain('embeddedPartitionForProfile(selected.id)');
     expect(styles).toContain('.embedded-webview');
@@ -54,6 +54,44 @@ describe('browser chrome UI', () => {
     expect(appSource).toContain('x: rect.left + 1');
     expect(appSource).toContain('width: Math.max(0, visibleWidth - 2)');
     expect(appSource).toContain('Math.min(rect.bottom, mainRect.bottom)');
+  });
+
+  it('can switch the renderer from DOM webview to the native browser path', () => {
+    const mainSource = readFileSync('electron/main.ts', 'utf8');
+    const typesSource = readFileSync('src/types.ts', 'utf8');
+
+    expect(mainSource).toContain('browserPageViewMode: currentBrowserPageViewMode()');
+    expect(typesSource).toContain("browserPageViewMode?: 'browser-view' | 'web-contents-view';");
+    expect(appSource).toContain('browserSurfaceModeFromSettings');
+    expect(appSource).toContain('shouldUseDomSurface');
+    expect(appSource).toContain('shouldUseNativeSurface');
+    expect(appSource).toContain('setBrowserSurfaceMode(browserSurfaceModeFromSettings(settings));');
+    expect(appSource).toContain("useState<BrowserSurfaceMode>('loading')");
+    expect(appSource).toContain('!shouldUseNativeSurface(browserSurfaceMode)');
+    expect(appSource).toContain('shouldUseDomSurface(browserSurfaceMode) ? (');
+    expect(appSource).toContain('<div className="native-browser-hint">CHROMIUM VIEW</div>');
+  });
+
+  it('does not mount DOM or native browser surfaces before settings choose the mode', () => {
+    const prepareEffect = appSource.slice(
+      appSource.indexOf('if (!shouldUseDomSurface(browserSurfaceMode) || !selected?.id || isSelfTestView)'),
+      appSource.indexOf('}, [browserSurfaceMode, isSelfTestView'),
+    );
+    const syncHandler = appSource.slice(
+      appSource.indexOf('const syncNativeBrowserView'),
+      appSource.indexOf('const clearScheduledNativeBrowserViewSync'),
+    );
+    const browserPanel = appSource.slice(
+      appSource.indexOf('<section className="browser-panel full-browser">'),
+      appSource.indexOf('</section>', appSource.indexOf('<section className="browser-panel full-browser">')),
+    );
+
+    expect(appSource).toContain("useState<BrowserSurfaceMode>('loading')");
+    expect(prepareEffect).toContain('!shouldUseDomSurface(browserSurfaceMode)');
+    expect(syncHandler).toContain('!shouldUseNativeSurface(browserSurfaceMode)');
+    expect(browserPanel).toContain("browserSurfaceMode === 'loading'");
+    expect(browserPanel.indexOf("browserSurfaceMode === 'loading'")).toBeLessThan(browserPanel.indexOf('shouldUseDomSurface(browserSurfaceMode)'));
+    expect(browserPanel).toContain('PREPARING BROWSER MODE');
   });
 
   it('resyncs the native BrowserView after inspector and profile layout changes settle', () => {
@@ -267,6 +305,32 @@ describe('browser chrome UI', () => {
     expect(mainSource).toContain('openEmbeddedWebviewPopupAsTab(profileId, url)');
     expect(mainSource).toContain("contents.on('will-navigate', (event, url) => {");
     expect(mainSource).toContain('event.preventDefault();');
+  });
+
+  it('does not let native navigation-state polling overwrite DOM webview runtime state', () => {
+    const stateEffect = appSource.slice(
+      appSource.indexOf('void window.api.getNativeBrowserNavigationState'),
+      appSource.indexOf('useEffect(() => {', appSource.indexOf('void window.api.getNativeBrowserNavigationState') + 1),
+    );
+    const domStateBranch = appSource.slice(
+      appSource.indexOf('if (shouldUseDomSurface(browserSurfaceMode)) {', appSource.indexOf('if (!selected?.id || !selectedTabId)')),
+      appSource.indexOf('let cancelled = false;', appSource.indexOf('if (!selected?.id || !selectedTabId)')),
+    );
+
+    expect(appSource).toContain("if (browserSurfaceMode === 'loading') {");
+    expect(domStateBranch).toContain('setNavigationState({');
+    expect(domStateBranch).toContain('canGoBack: selectedTab.canGoBack ?? false');
+    expect(domStateBranch).toContain('return undefined;');
+    expect(stateEffect).toContain('getNativeBrowserNavigationState');
+    expect(domStateBranch.indexOf('return undefined;')).toBeGreaterThan(domStateBranch.indexOf('if (shouldUseDomSurface(browserSurfaceMode))'));
+  });
+
+  it('opens sidebar bookmarks with the bookmark URL instead of stale address-bar state', () => {
+    expect(appSource).toContain('async function openWebsite(profile: BrowserProfile, explicitUrl = openUrl)');
+    expect(appSource).toContain('openProfileUrl(profile.id, explicitUrl)');
+    expect(appSource).toContain('profileAddressBarUrl(updated, explicitUrl)');
+    expect(appSource).toContain('void openWebsite(profile, bookmark.url);');
+    expect(appSource).not.toContain('setOpenUrl(bookmark.url); void openWebsite(profile);');
   });
 
   it('does not call DOM webview navigation methods before they are ready', () => {
